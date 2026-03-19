@@ -1,0 +1,1360 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
+import { 
+  Sword, 
+  Shield, 
+  Heart, 
+  Sparkles, 
+  Coins, 
+  Apple, 
+  Scroll, 
+  History, 
+  RotateCcw, 
+  Plus, 
+  Minus, 
+  Trash2, 
+  Dices, 
+  Dice1,
+  Dice2,
+  Dice3,
+  Dice4,
+  Dice5,
+  Dice6,
+  Skull,
+  BookOpen,
+  Info,
+  Save,
+  Undo2,
+  Zap,
+  AlertCircle,
+  X
+} from 'lucide-react';
+import { GameClass, CharacterState, LogEntry, Stats, Monster } from './types.ts';
+import { SPELLS, WIZARD_NAMES } from './constants.ts';
+import { TRANSLATIONS, Language } from './translations.ts';
+
+// --- Utility Functions ---
+const rollDie = () => Math.floor(Math.random() * 6) + 1;
+const rollDice = (count: number) => Array.from({ length: count }, rollDie).reduce((a, b) => a + b, 0);
+
+const INITIAL_CHARACTER: CharacterState = {
+  name: '',
+  class: null,
+  skill: { current: 0, max: 0 },
+  stamina: { current: 0, max: 0 },
+  luck: { current: 0, max: 0 },
+  gold: 20,
+  provisions: 2,
+  items: [],
+  libraUsed: false,
+  notes: '',
+};
+
+// --- Components ---
+function StatBox({ label, val, max, icon, isLow }: { 
+  label: string; 
+  val: number; 
+  max?: number; 
+  icon: React.ReactNode;
+  isLow?: boolean;
+}) {
+  return (
+    <div className={`relative flex flex-col items-center p-2 rounded-lg border-2 border-[#8b5e3c] shadow-inner transition-colors duration-500 ${isLow ? 'animate-pulse-red' : 'bg-[#e8d5a7]'}`}>
+      <div className="flex items-center gap-1 text-[10px] uppercase font-bold opacity-70 mb-1">
+        {icon} {label}
+      </div>
+      <div className="text-center relative">
+        <AnimatePresence mode="popLayout">
+          <motion.span 
+            key={val}
+            initial={{ y: 10, opacity: 0, scale: 0.5 }}
+            animate={{ y: 0, opacity: 1, scale: 1 }}
+            exit={{ y: -10, opacity: 0, scale: 0.5 }}
+            className="text-xl font-bold block"
+          >
+            {val}
+          </motion.span>
+        </AnimatePresence>
+        {max !== undefined && <span className="text-[10px] opacity-50 block">/ {max}</span>}
+      </div>
+    </div>
+  );
+}
+
+function StatAdjuster({ label, val, onInc, onDec }: { 
+  label: string; 
+  val: number;
+  onInc: () => void; 
+  onDec: () => void;
+}) {
+  return (
+    <div className="flex items-center justify-between bg-white/40 p-2 rounded-lg border border-[#8b5e3c]/30 px-3">
+      <button 
+        onClick={(e) => { e.stopPropagation(); onDec(); }} 
+        className="p-2 bg-[#8b5e3c] text-white rounded-lg active:scale-90 shadow-sm"
+      >
+        <Minus size={16} />
+      </button>
+      
+      <div className="flex flex-col items-center flex-1">
+        <span className="text-[10px] font-bold opacity-60 mb-0.5">{label}</span>
+        <div className="bg-[#e8d5a7] border-2 border-[#8b5e3c] rounded-md px-3 py-0.5 shadow-inner min-w-[45px] text-center">
+          <span dir="ltr" className={`text-xl font-bold leading-none block ${val > 0 ? 'text-green-800' : val < 0 ? 'text-red-800' : ''}`}>
+            {val > 0 ? `+${val}` : val}
+          </span>
+        </div>
+      </div>
+
+      <button 
+        onClick={(e) => { e.stopPropagation(); onInc(); }} 
+        className="p-2 bg-[#8b5e3c] text-white rounded-lg active:scale-90 shadow-sm"
+      >
+        <Plus size={16} />
+      </button>
+    </div>
+  );
+}
+
+function NavButton({ active, onClick, icon, label }: { active: boolean; onClick: () => void; icon: React.ReactNode; label: string }) {
+  return (
+    <button 
+      onClick={onClick}
+      className={`flex flex-col items-center gap-1 p-2 transition-all ${active ? 'text-[#8b5e3c] scale-110' : 'text-gray-400'}`}
+    >
+      <div className={`${active ? 'bg-[#e8d5a7] p-2 rounded-xl' : ''}`}>
+        {React.cloneElement(icon as React.ReactElement, { size: 24 })}
+      </div>
+      <span className="text-[10px] font-bold">{label}</span>
+    </button>
+  );
+}
+
+function DieIcon({ val, size = 32 }: { val: number; size?: number }) {
+  const icons = [Dice1, Dice2, Dice3, Dice4, Dice5, Dice6];
+  const Icon = icons[val - 1] || Dice1;
+  return <Icon size={size} />;
+}
+
+export default function App() {
+  const [character, setCharacter] = useState<CharacterState>(INITIAL_CHARACTER);
+  const [log, setLog] = useState<LogEntry[]>([]);
+  const [isInitialized, setIsInitialized] = useState(false);
+  const [isRolling, setIsRolling] = useState(false);
+  const [shake, setShake] = useState(false);
+  const [activeTab, setActiveTab] = useState<'current' | 'history'>('current');
+  const [spellInput, setSpellInput] = useState('');
+  const [monsters, setMonsters] = useState<Monster[]>([]);
+  const [paragraphInput, setParagraphInput] = useState('');
+  const [noteInput, setNoteInput] = useState('');
+  const [showSpellList, setShowSpellList] = useState(false);
+  const [itemInput, setItemInput] = useState('');
+  const [showItemInput, setShowItemInput] = useState(false);
+  const [confirmModal, setConfirmModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    onConfirm: () => {},
+  });
+  const [initialRolls, setInitialRolls] = useState<{ skill: number[]; stamina: number[]; luck: number[] } | null>(null);
+  const [diceResult, setDiceResult] = useState<{ values: number[] } | null>(null);
+  const [combatRound, setCombatRound] = useState<{ 
+    playerRoll: number[]; 
+    monsterRoll: number[]; 
+    monsterId: string | null;
+    result: 'win' | 'loss' | 'draw' | null;
+    luckTested: boolean;
+  }>({ playerRoll: [], monsterRoll: [], monsterId: null, result: null, luckTested: false });
+  const [deltas, setDeltas] = useState({ skill: 0, stamina: 0, luck: 0, gold: 0 });
+  const [floatingDeltas, setFloatingDeltas] = useState<{ id: string; stat: string; delta: number }[]>([]);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [language, setLanguage] = useState<Language>('he');
+
+  const t = TRANSLATIONS[language];
+  const isLowStamina = character.stamina.current <= 4;
+  const isGameOver = character.stamina.current <= 0;
+
+  // --- Item & Name Translation on Language Change ---
+  useEffect(() => {
+    const prevLang: Language = language === 'he' ? 'en' : 'he';
+    const prevT = TRANSLATIONS[prevLang];
+    const currT = TRANSLATIONS[language];
+
+    setCharacter(prev => {
+      const updatedItems = prev.items.map(item => {
+        if (item === prevT.sword) return currT.sword;
+        const specialIdx = prevT.specialItemsList.indexOf(item);
+        if (specialIdx !== -1) return currT.specialItemsList[specialIdx];
+        return item;
+      });
+
+      const wizardIdx = prevT.wizardNames.indexOf(prev.name);
+      const updatedName = wizardIdx !== -1 ? currT.wizardNames[wizardIdx] : prev.name;
+
+      return { ...prev, items: updatedItems, name: updatedName };
+    });
+  }, [language]);
+
+  // --- Persistence ---
+  useEffect(() => {
+    const savedState = localStorage.getItem('sorcery_game_state');
+    if (savedState) {
+      const { character: savedChar, log: savedLog, isInitialized: savedInit, language: savedLang } = JSON.parse(savedState);
+      setCharacter(savedChar);
+      setLog(savedLog);
+      setIsInitialized(savedInit);
+      if (savedLang) setLanguage(savedLang);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (isInitialized) {
+      localStorage.setItem('sorcery_game_state', JSON.stringify({ character, log, isInitialized, language }));
+    }
+  }, [character, log, isInitialized, language]);
+
+  // --- Actions ---
+  const triggerShake = () => {
+    setShake(true);
+    setTimeout(() => setShake(false), 500);
+  };
+
+  const updateStat = (stat: 'skill' | 'stamina' | 'luck', delta: number, ignoreMax = false) => {
+    if (delta === 0) return;
+    
+    setCharacter(prev => {
+      const current = prev[stat].current + delta;
+      const max = prev[stat].max;
+      
+      const newValue = ignoreMax ? current : Math.min(current, max);
+      
+      if (stat === 'stamina' && delta < 0) triggerShake();
+      
+      return {
+        ...prev,
+        [stat]: { ...prev[stat], current: Math.max(0, newValue) }
+      };
+    });
+
+    // Floating delta animation
+    const id = Math.random().toString(36).substr(2, 9);
+    setFloatingDeltas(prev => [...prev, { id, stat, delta }]);
+    setTimeout(() => {
+      setFloatingDeltas(prev => prev.filter(d => d.id !== id));
+    }, 2000);
+  };
+
+  const showMessage = (msg: string) => {
+    setErrorMsg(msg);
+    setTimeout(() => setErrorMsg(null), 3000);
+  };
+
+  const adjustWithDelta = (stat: 'skill' | 'stamina' | 'luck' | 'gold', amount: number, ignoreMax = false) => {
+    if (stat === 'gold') {
+      const prevGold = character.gold;
+      const newGold = Math.max(0, prevGold + amount);
+      if (newGold !== prevGold) {
+        setCharacter(p => ({ ...p, gold: newGold }));
+        setDeltas(d => ({ ...d, gold: d.gold + (newGold - prevGold) }));
+        
+        // Floating delta animation
+        const id = Math.random().toString(36).substr(2, 9);
+        setFloatingDeltas(prev => [...prev, { id, stat: 'gold', delta: amount }]);
+        setTimeout(() => {
+          setFloatingDeltas(prev => prev.filter(d => d.id !== id));
+        }, 2000);
+      }
+      return;
+    }
+
+    const currentVal = character[stat].current;
+    const max = character[stat].max;
+
+    if (amount > 0 && !ignoreMax && currentVal >= max) {
+      const statName = stat === 'skill' ? t.skill : stat === 'luck' ? t.luck : t.stamina;
+      showMessage(t.maxStatError.replace('{max}', max.toString()).replace('{stat}', statName));
+      return;
+    }
+
+    updateStat(stat, amount, ignoreMax);
+    setDeltas(d => ({ ...d, [stat]: d[stat] + amount }));
+  };
+
+  const eatProvision = () => {
+    if (character.provisions > 0) {
+      setCharacter(prev => ({ ...prev, provisions: prev.provisions - 1 }));
+      updateStat('stamina', 4);
+    }
+  };
+
+  const castSpell = () => {
+    const code = spellInput.toUpperCase();
+    const spell = SPELLS[code];
+    if (spell) {
+      if (character.stamina.current > spell.cost) {
+        updateStat('stamina', -spell.cost);
+        setSpellInput('');
+      } else {
+        showMessage(t.noStaminaSpell);
+      }
+    } else {
+      showMessage(t.spellError);
+    }
+  };
+
+  const addMonster = () => {
+    const newMonster: Monster = {
+      id: Math.random().toString(36).substr(2, 9),
+      name: `${t.monsterDefaultName} ${monsters.length + 1}`,
+      skill: 7,
+      stamina: 8,
+    };
+    setMonsters([...monsters, newMonster]);
+  };
+
+  const updateMonster = (id: string, field: 'skill' | 'stamina', delta: number) => {
+    setMonsters(prev => prev.map(m => 
+      m.id === id ? { ...m, [field]: Math.max(0, m[field] + delta) } : m
+    ));
+  };
+
+  const removeMonster = (id: string) => {
+    setMonsters(prev => prev.filter(m => m.id !== id));
+  };
+
+  const saveLogEntry = () => {
+    if (!paragraphInput) {
+      showMessage(t.paragraphError);
+      return;
+    }
+    const newEntry: LogEntry = {
+      id: Math.random().toString(36).substr(2, 9),
+      paragraph: paragraphInput,
+      note: noteInput,
+      timestamp: Date.now(),
+      snapshot: JSON.parse(JSON.stringify(character)),
+    };
+    setLog([newEntry, ...log]);
+    setParagraphInput('');
+    setNoteInput('');
+    setMonsters([]); // Clear monsters for next paragraph
+    setDeltas({ skill: 0, stamina: 0, luck: 0, gold: 0 }); // Reset deltas for next paragraph
+    showMessage(t.logSaved);
+  };
+
+  const revertToEntry = (entry: LogEntry) => {
+    setConfirmModal({
+      isOpen: true,
+      title: t.revert,
+      message: t.revertConfirm,
+      onConfirm: () => {
+        setCharacter(entry.snapshot);
+        const entryIndex = log.findIndex(e => e.id === entry.id);
+        setLog(log.slice(entryIndex));
+        setActiveTab('current');
+        setConfirmModal(p => ({ ...p, isOpen: false }));
+      }
+    });
+  };
+
+  const resetAdventure = () => {
+    setCharacter(INITIAL_CHARACTER);
+    setLog([]);
+    setIsInitialized(false);
+    setMonsters([]);
+    setDeltas({ skill: 0, stamina: 0, luck: 0, gold: 0 });
+    localStorage.removeItem('sorcery_game_state');
+    setActiveTab('current');
+  };
+
+  const useLibra = () => {
+    if (!character.libraUsed) {
+      setConfirmModal({
+        isOpen: true,
+        title: t.libra,
+        message: t.libraConfirm,
+        onConfirm: () => {
+          setCharacter(prev => ({
+            ...prev,
+            skill: { ...prev.skill, current: prev.skill.max },
+            stamina: { ...prev.stamina, current: prev.stamina.max },
+            luck: { ...prev.luck, current: prev.luck.max },
+            libraUsed: true
+          }));
+          setConfirmModal(p => ({ ...p, isOpen: false }));
+        }
+      });
+    }
+  };
+
+  // --- Stats Generation ---
+  const generateStats = (gameClass: GameClass) => {
+    setIsRolling(true);
+    setInitialRolls(null);
+    setTimeout(() => {
+      const s1 = rollDie();
+      const st1 = rollDie();
+      const st2 = rollDie();
+      const l1 = rollDie();
+
+      const skillRoll = s1;
+      const staminaRoll = st1 + st2;
+      const luckRoll = l1;
+
+      const skillBase = gameClass === 'Warrior' ? 6 : 4;
+      const initialSkill = skillRoll + skillBase;
+      const initialStamina = staminaRoll + 12;
+      const initialLuck = luckRoll + 6;
+
+      setInitialRolls({
+        skill: [s1],
+        stamina: [st1, st2],
+        luck: [l1]
+      });
+
+      setCharacter({
+        ...INITIAL_CHARACTER,
+        class: gameClass,
+        skill: { current: initialSkill, max: initialSkill },
+        stamina: { current: initialStamina, max: initialStamina },
+        luck: { current: initialLuck, max: initialLuck },
+      });
+      setIsRolling(false);
+    }, 1500);
+  };
+
+  const finalizeCharacter = () => {
+    setCharacter(prev => ({
+      ...prev,
+      items: [t.sword]
+    }));
+    setIsInitialized(true);
+  };
+
+  // --- Render Helpers ---
+  if (!isInitialized) {
+    return (
+      <div className={`min-h-screen bg-[#f4e4bc] text-[#2c1810] font-serif p-6 flex flex-col items-center justify-center ${language === 'he' ? 'text-right' : 'text-left'}`} dir={language === 'he' ? 'rtl' : 'ltr'}>
+        <motion.div 
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="max-w-md w-full bg-[#fff9eb] border-4 border-[#8b5e3c] rounded-lg p-8 shadow-2xl relative overflow-hidden"
+        >
+          <div className="absolute top-0 left-0 w-full h-2 bg-[#8b5e3c]" />
+          <div className="flex justify-between items-center mb-6 border-b-2 border-[#8b5e3c] pb-4">
+            <h1 className="text-4xl font-bold">{t.title}</h1>
+            <button 
+              onClick={() => setLanguage(l => l === 'he' ? 'en' : 'he')}
+              className="px-2 py-1 bg-[#8b5e3c] text-white rounded-lg text-xs font-bold"
+            >
+              {language === 'he' ? 'English' : 'עברית'}
+            </button>
+          </div>
+          <p className="text-lg mb-8 text-center italic">{t.subtitle}</p>
+          
+          {!character.class ? (
+            <div className="space-y-6">
+              <div className="space-y-3">
+                <label className="block text-sm font-bold opacity-70">{t.characterName}</label>
+                <input 
+                  type="text" 
+                  value={character.name}
+                  onChange={(e) => setCharacter(prev => ({ ...prev, name: e.target.value }))}
+                  placeholder={t.placeholderName}
+                  className="w-full p-3 bg-white border-2 border-[#8b5e3c] rounded-lg text-lg focus:outline-none focus:ring-2 focus:ring-[#8b5e3c]/50"
+                />
+                <div className="flex flex-wrap gap-2 mt-2">
+                  {t.wizardNames.slice(0, 5).map(name => (
+                    <button 
+                      key={name}
+                      onClick={() => setCharacter(prev => ({ ...prev, name }))}
+                      className="px-3 py-1 bg-[#e8d5a7] border border-[#8b5e3c] rounded-full text-xs hover:bg-[#d4c196] transition-colors"
+                    >
+                      {name}
+                    </button>
+                  ))}
+                  <button 
+                    onClick={() => {
+                      const names = t.wizardNames;
+                      const randomName = names[Math.floor(Math.random() * names.length)];
+                      setCharacter(prev => ({ ...prev, name: randomName }));
+                    }}
+                    className="px-3 py-1 bg-[#8b5e3c] text-white rounded-full text-xs hover:bg-[#6d4a30] transition-colors"
+                  >
+                    {t.randomName}
+                  </button>
+                </div>
+              </div>
+
+              <div className="space-y-4 pt-4 border-t border-[#8b5e3c]/20">
+                <p className="text-center mb-2 font-bold">{t.chooseClass}</p>
+                <button 
+                  onClick={() => generateStats('Warrior')}
+                  disabled={!character.name.trim()}
+                  className="w-full py-4 bg-[#8b5e3c] text-white rounded-lg text-xl font-bold hover:bg-[#6d4a30] transition-colors flex items-center justify-center gap-3 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <Sword size={24} /> {t.warrior}
+                </button>
+                <button 
+                  onClick={() => generateStats('Sorcerer')}
+                  disabled={!character.name.trim()}
+                  className="w-full py-4 bg-[#4a6d8c] text-white rounded-lg text-xl font-bold hover:bg-[#3a566e] transition-colors flex items-center justify-center gap-3 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <Sparkles size={24} /> {t.sorcerer}
+                </button>
+                {!character.name.trim() && (
+                  <p className="text-[10px] text-red-700 text-center animate-pulse">{t.enterNameError}</p>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-6">
+              <div className="text-center space-y-2">
+                <h2 className="text-3xl font-bold text-[#8b5e3c]">{character.name}</h2>
+                <p className="text-sm opacity-70 italic">
+                  {character.class === 'Warrior' ? t.warrior : t.sorcerer} {t.brave}
+                </p>
+              </div>
+
+              <div className="grid grid-cols-3 gap-4 text-center">
+                <div className="p-3 bg-[#e8d5a7] rounded-lg border border-[#8b5e3c] flex flex-col items-center">
+                  <p className="text-sm opacity-70">{t.skill}</p>
+                  <p className="text-3xl font-bold">{character.skill.max}</p>
+                  {initialRolls && (
+                    <div className="flex gap-1 mt-1 opacity-60">
+                      <DieIcon val={initialRolls.skill[0]} size={14} />
+                      <span className="text-[10px]">+{character.class === 'Warrior' ? 6 : 4}</span>
+                    </div>
+                  )}
+                </div>
+                <div className="p-3 bg-[#e8d5a7] rounded-lg border border-[#8b5e3c] flex flex-col items-center">
+                  <p className="text-sm opacity-70">{t.stamina}</p>
+                  <p className="text-3xl font-bold">{character.stamina.max}</p>
+                  {initialRolls && (
+                    <div className="flex gap-1 mt-1 opacity-60">
+                      <DieIcon val={initialRolls.stamina[0]} size={14} />
+                      <DieIcon val={initialRolls.stamina[1]} size={14} />
+                      <span className="text-[10px]">+12</span>
+                    </div>
+                  )}
+                </div>
+                <div className="p-3 bg-[#e8d5a7] rounded-lg border border-[#8b5e3c] flex flex-col items-center">
+                  <p className="text-sm opacity-70">{t.luck}</p>
+                  <p className="text-3xl font-bold">{character.luck.max}</p>
+                  {initialRolls && (
+                    <div className="flex gap-1 mt-1 opacity-60">
+                      <DieIcon val={initialRolls.luck[0]} size={14} />
+                      <span className="text-[10px]">+6</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+              
+              <div className="bg-[#e8d5a7] p-4 rounded-lg border border-[#8b5e3c]">
+                <p className="font-bold mb-2">{t.startingEquipment}</p>
+                <ul className="list-disc list-inside space-y-1">
+                  <li>{t.sword}</li>
+                  <li>20 {t.gold}</li>
+                  <li>2 {t.provisions}</li>
+                </ul>
+              </div>
+
+              <div className="flex gap-4">
+                <button 
+                  onClick={() => setCharacter(INITIAL_CHARACTER)}
+                  className="flex-1 py-3 border-2 border-[#8b5e3c] rounded-lg font-bold hover:bg-[#e8d5a7]"
+                >
+                  {t.rollAgain}
+                </button>
+                <button 
+                  onClick={finalizeCharacter}
+                  className="flex-1 py-3 bg-[#8b5e3c] text-white rounded-lg font-bold hover:bg-[#6d4a30]"
+                >
+                  {t.startAdventure}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {isRolling && (
+            <div className="absolute inset-0 bg-black/20 flex items-center justify-center backdrop-blur-sm">
+              <motion.div 
+                animate={{ rotate: 360 }}
+                transition={{ repeat: Infinity, duration: 0.5, ease: "linear" }}
+              >
+                <Dices size={64} className="text-[#8b5e3c]" />
+              </motion.div>
+            </div>
+          )}
+        </motion.div>
+      </div>
+    );
+  }
+
+  if (isGameOver) {
+    return (
+      <div className={`min-h-screen bg-black text-red-600 font-serif p-6 flex flex-col items-center justify-center ${language === 'he' ? 'text-right' : 'text-left'}`} dir={language === 'he' ? 'rtl' : 'ltr'}>
+        <motion.div 
+          initial={{ opacity: 0, scale: 0.8 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="max-w-md w-full text-center space-y-8"
+        >
+          <Skull size={120} className="mx-auto animate-pulse" />
+          <h1 className="text-6xl font-black tracking-tighter uppercase">{t.gameOver}</h1>
+          <p className="text-xl font-bold opacity-80">
+            {t.diedAt} {log[0]?.paragraph || '??'}
+          </p>
+          <button 
+            onClick={resetAdventure}
+            className="px-12 py-4 bg-red-700 text-white rounded-xl text-2xl font-bold hover:bg-red-800 shadow-[0_0_30px_rgba(185,28,28,0.5)] transition-all active:scale-95"
+          >
+            {t.restart}
+          </button>
+        </motion.div>
+      </div>
+    );
+  }
+
+  return (
+    <div className={`min-h-screen bg-[#f4e4bc] text-[#2c1810] font-serif pb-24 ${language === 'he' ? 'text-right' : 'text-left'} ${shake ? 'animate-shake' : ''}`} dir={language === 'he' ? 'rtl' : 'ltr'}>
+      {/* Floating Deltas */}
+      <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 pointer-events-none flex flex-col items-center gap-2">
+        <AnimatePresence>
+          {floatingDeltas.map(d => (
+            <motion.div
+              key={d.id}
+              initial={{ y: 50, opacity: 0, scale: 0.5 }}
+              animate={{ y: -100, opacity: 1, scale: 1.5 }}
+              exit={{ opacity: 0, scale: 2 }}
+              className={`font-bold text-3xl drop-shadow-[0_2px_8px_rgba(0,0,0,0.5)] flex items-center gap-2 ${d.delta > 0 ? 'text-green-500' : 'text-red-500'}`}
+            >
+              <span dir="ltr">{d.delta > 0 ? `+${d.delta}` : d.delta}</span>
+              <span>{
+                d.stat === 'skill' ? t.skill : 
+                d.stat === 'stamina' ? t.stamina : 
+                d.stat === 'luck' ? t.luck : t.gold
+              }</span>
+            </motion.div>
+          ))}
+        </AnimatePresence>
+      </div>
+
+      {/* Error Message Overlay */}
+      <AnimatePresence>
+        {errorMsg && (
+          <motion.div 
+            initial={{ opacity: 0, y: 50 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 50 }}
+            className="fixed bottom-24 left-1/2 -translate-x-1/2 z-50 bg-red-900/90 text-white px-6 py-3 rounded-full shadow-2xl border-2 border-red-400 flex items-center gap-2 pointer-events-none"
+          >
+            <AlertCircle size={20} />
+            <span className="font-bold text-sm">{errorMsg}</span>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Header Stats */}
+      <header className="bg-[#fff9eb] border-b-4 border-[#8b5e3c] p-2 sticky top-0 z-30 shadow-md">
+        <div className="max-w-2xl mx-auto space-y-2">
+          <div className="flex items-center justify-between px-2">
+            <div className="flex items-center gap-2">
+              <h1 className="text-xl font-bold text-[#8b5e3c]">{character.name}</h1>
+              <span className="text-xs opacity-60 font-bold italic">
+                {character.class === 'Warrior' ? t.warrior : t.sorcerer}
+              </span>
+            </div>
+            <button 
+              onClick={() => setLanguage(l => l === 'he' ? 'en' : 'he')}
+              className="px-2 py-1 bg-[#8b5e3c] text-white rounded-lg text-xs font-bold"
+            >
+              {language === 'he' ? 'English' : 'עברית'}
+            </button>
+          </div>
+          <div className="grid grid-cols-4 gap-1">
+            <StatBox 
+              label={t.skill} 
+              val={character.skill.current} 
+              max={character.skill.max} 
+              icon={<Sword size={14} />} 
+            />
+          <StatBox 
+            label={t.stamina} 
+            val={character.stamina.current} 
+            max={character.stamina.max} 
+            icon={<Heart size={14} />} 
+            isLow={isLowStamina}
+          />
+          <StatBox 
+            label={t.luck} 
+            val={character.luck.current} 
+            max={character.luck.max} 
+            icon={<Shield size={14} />} 
+          />
+          <StatBox 
+            label={t.gold} 
+            val={character.gold} 
+            icon={<Coins size={14} />} 
+          />
+          </div>
+        </div>
+      </header>
+
+      <main className="max-w-2xl mx-auto p-4 space-y-6">
+        <AnimatePresence mode="wait">
+          {activeTab === 'current' && (
+            <motion.div 
+              key="current"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              className="space-y-6"
+            >
+              {/* Paragraph Info */}
+              <section className="bg-[#fff9eb] border-2 border-[#8b5e3c] rounded-lg p-4 shadow-md">
+                <div className="flex gap-3">
+                  <div className="flex-1">
+                    <label className="block text-[10px] font-bold mb-1 opacity-70">{t.currentParagraph}</label>
+                    <input 
+                      type="number"
+                      value={paragraphInput}
+                      onChange={(e) => setParagraphInput(e.target.value)}
+                      placeholder="#"
+                      className="w-full bg-[#e8d5a7] border-2 border-[#8b5e3c] rounded-lg p-2 text-xl font-bold focus:ring-0 text-center"
+                    />
+                  </div>
+                  <div className="flex-[3]">
+                    <label className="block text-[10px] font-bold mb-1 opacity-70">{t.paragraphNote}</label>
+                    <input 
+                      value={noteInput}
+                      onChange={(e) => setNoteInput(e.target.value)}
+                      placeholder={t.notePlaceholder}
+                      className="w-full bg-[#e8d5a7] border-2 border-[#8b5e3c] rounded-lg p-2 focus:ring-0"
+                    />
+                  </div>
+                </div>
+              </section>
+
+              {/* Character Management "The Cube" */}
+              <section className="bg-[#fff9eb] border-2 border-[#8b5e3c] rounded-lg p-4 shadow-md space-y-6">
+                <h2 className="text-center font-bold border-b border-[#8b5e3c] pb-2 flex items-center justify-center gap-2">
+                  <Scroll size={18} /> {t.characterManagement}
+                </h2>
+                
+                {/* Stat Adjustments */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-3">
+                    <StatAdjuster label={t.skill} val={deltas.skill} onInc={() => adjustWithDelta('skill', 1)} onDec={() => adjustWithDelta('skill', -1)} />
+                    <StatAdjuster label={t.stamina} val={deltas.stamina} onInc={() => adjustWithDelta('stamina', 1)} onDec={() => adjustWithDelta('stamina', -1)} />
+                  </div>
+                  <div className="space-y-3">
+                    <StatAdjuster label={t.luck} val={deltas.luck} onInc={() => adjustWithDelta('luck', 1)} onDec={() => adjustWithDelta('luck', -1)} />
+                    <StatAdjuster label={t.gold} val={deltas.gold} onInc={() => adjustWithDelta('gold', 1)} onDec={() => adjustWithDelta('gold', -1)} />
+                  </div>
+                </div>
+
+                <div className="border-t border-[#8b5e3c] pt-4 space-y-4">
+                  <div>
+                    <p className="text-xs font-bold mb-2 opacity-70">{t.specialItems}</p>
+                    <div className="flex flex-wrap gap-2">
+                      {t.specialItemsList.map(special => (
+                        <button 
+                          key={special}
+                          onClick={() => {
+                            if (character.items.includes(special)) {
+                              setCharacter(p => ({ ...p, items: p.items.filter(i => i !== special) }));
+                            } else {
+                              setCharacter(p => ({ ...p, items: [...p.items, special] }));
+                            }
+                          }}
+                          className={`px-2 py-1 border rounded-full text-[10px] transition-colors ${character.items.includes(special) ? 'bg-[#8b5e3c] text-white border-[#8b5e3c]' : 'border-[#8b5e3c] opacity-50'}`}
+                        >
+                          {special}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="flex justify-between items-center mb-2">
+                      <p className="text-xs font-bold opacity-70">{t.inventory}</p>
+                      <button 
+                        onClick={() => {
+                          setConfirmModal({
+                            isOpen: true,
+                            title: t.endDay,
+                            message: t.dayEndConfirm,
+                            onConfirm: () => {
+                              if (character.provisions > 0) {
+                                setCharacter(p => ({ ...p, provisions: p.provisions - 1 }));
+                                showMessage(t.dayEndProvisionUsed);
+                              } else {
+                                showMessage(t.dayEndNoFood);
+                                updateStat('stamina', -3);
+                              }
+                              setConfirmModal(p => ({ ...p, isOpen: false }));
+                            }
+                          });
+                        }}
+                        className="text-[10px] font-bold bg-[#8b5e3c] text-white px-2 py-0.5 rounded-full"
+                      >
+                        {t.endDay}
+                      </button>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {character.items.filter(i => !t.specialItemsList.includes(i)).map((item, i) => (
+                        <span key={i} className="px-2 py-1 bg-[#e8d5a7] border border-[#8b5e3c] rounded-full text-[10px] flex items-center gap-1">
+                          {item}
+                          <button onClick={() => setCharacter(p => ({ ...p, items: p.items.filter((_, idx) => idx !== character.items.indexOf(item)) }))}><Trash2 size={10} /></button>
+                        </span>
+                      ))}
+                      {showItemInput ? (
+                        <div className="flex items-center gap-2">
+                          <input 
+                            autoFocus
+                            value={itemInput}
+                            onChange={(e) => setItemInput(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' && itemInput.trim()) {
+                                setCharacter(p => ({ ...p, items: [...p.items, itemInput.trim()] }));
+                                setItemInput('');
+                                setShowItemInput(false);
+                              } else if (e.key === 'Escape') {
+                                setShowItemInput(false);
+                              }
+                            }}
+                            className="px-2 py-1 bg-[#e8d5a7] border border-[#8b5e3c] rounded-full text-[10px] w-24 outline-none"
+                            placeholder={t.addItem}
+                          />
+                          <button onClick={() => setShowItemInput(false)} className="text-[#8b5e3c]"><X size={10} /></button>
+                        </div>
+                      ) : (
+                        <button 
+                          onClick={() => setShowItemInput(true)}
+                          className="px-2 py-1 border border-dashed border-[#8b5e3c] rounded-full text-[10px] flex items-center gap-1"
+                        >
+                          <Plus size={10} /> {t.add}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              {/* Quick Actions & Spells */}
+              <section className="bg-[#fff9eb] border-2 border-[#8b5e3c] rounded-lg p-4 shadow-md space-y-4">
+                <div className="grid grid-cols-2 gap-3">
+                  <button 
+                    onClick={eatProvision}
+                    disabled={character.provisions === 0}
+                    className="flex items-center justify-center gap-2 p-3 bg-[#8b5e3c] text-white rounded-xl text-sm font-bold shadow-md active:scale-95 transition-transform disabled:opacity-50"
+                  >
+                    <Apple size={18} /> {t.eatProvision} ({character.provisions})
+                  </button>
+                  <button 
+                    onClick={useLibra}
+                    disabled={character.libraUsed}
+                    className={`flex items-center justify-center gap-2 p-3 rounded-xl text-sm font-bold shadow-md active:scale-95 transition-transform ${character.libraUsed ? 'bg-gray-400 text-gray-200' : 'bg-[#4a6d8c] text-white'}`}
+                  >
+                    <Sparkles size={18} /> {t.libra} {character.libraUsed ? t.libraUsed : ''}
+                  </button>
+                </div>
+
+                <div className="flex gap-2">
+                  <input 
+                    value={spellInput}
+                    onChange={(e) => setSpellInput(e.target.value.slice(0, 3).toUpperCase())}
+                    placeholder={t.spellCode}
+                    className="flex-1 bg-[#e8d5a7] border-2 border-[#8b5e3c] rounded-lg p-2 text-center font-bold tracking-widest focus:ring-0"
+                  />
+                  <button 
+                    onClick={castSpell}
+                    className="bg-[#4a6d8c] text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2"
+                  >
+                    <Zap size={18} /> {t.cast}
+                  </button>
+                  <button 
+                    onClick={() => setShowSpellList(true)}
+                    className="bg-[#e8d5a7] border-2 border-[#8b5e3c] p-2 rounded-lg"
+                  >
+                    <BookOpen size={20} />
+                  </button>
+                </div>
+              </section>
+
+              {/* Dice Roller */}
+              <section className="bg-[#fff9eb] border-2 border-[#8b5e3c] rounded-lg p-4 shadow-md">
+                <div className="flex items-center justify-between mb-3">
+                  <h2 className="text-lg font-bold flex items-center gap-2"><Dices size={20} /> {t.diceRoll}</h2>
+                  {diceResult && (
+                    <div className="flex items-center gap-3">
+                      <div className="flex gap-2">
+                        {diceResult.values.map((v, i) => (
+                          <motion.div
+                            key={`${i}-${v}-${Date.now()}`}
+                            initial={{ rotate: -180, scale: 0, opacity: 0 }}
+                            animate={{ rotate: 0, scale: 1, opacity: 1 }}
+                            transition={{ type: "spring", stiffness: 260, damping: 20 }}
+                            className="text-[#8b5e3c] bg-white p-1 rounded-lg shadow-sm"
+                          >
+                            <DieIcon val={v} />
+                          </motion.div>
+                        ))}
+                      </div>
+                      <motion.div 
+                        initial={{ scale: 0.5, opacity: 0 }}
+                        animate={{ scale: 1, opacity: 1 }}
+                        className="bg-[#8b5e3c] text-white px-3 py-1 rounded-full font-bold text-sm shadow-inner"
+                      >
+                        {t.total}: {diceResult.values.reduce((a, b) => a + b, 0)}
+                      </motion.div>
+                    </div>
+                  )}
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <button 
+                    onClick={() => {
+                      const res = [rollDie()];
+                      setDiceResult({ values: res });
+                      setShake(true);
+                      setTimeout(() => setShake(false), 500);
+                    }}
+                    className="flex items-center justify-center gap-2 p-3 bg-[#e8d5a7] border-2 border-[#8b5e3c] rounded-xl text-sm font-bold shadow-md active:scale-95 transition-transform"
+                  >
+                    <Dice1 size={18} /> {t.oneDie}
+                  </button>
+                  <button 
+                    onClick={() => {
+                      const res = [rollDie(), rollDie()];
+                      setDiceResult({ values: res });
+                      setShake(true);
+                      setTimeout(() => setShake(false), 500);
+                    }}
+                    className="flex items-center justify-center gap-2 p-3 bg-[#e8d5a7] border-2 border-[#8b5e3c] rounded-xl text-sm font-bold shadow-md active:scale-95 transition-transform"
+                  >
+                    <Dices size={18} className="rotate-12" /> {t.twoDice}
+                  </button>
+                </div>
+              </section>
+
+              {/* Combat Manager */}
+              <section className="bg-[#1a1a1a] border-4 border-[#8b5e3c] rounded-xl p-5 shadow-2xl space-y-6 relative overflow-hidden">
+                {/* Background Texture/Effect */}
+                <div className="absolute inset-0 opacity-5 pointer-events-none bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')]" />
+                
+                <div className="flex justify-between items-center border-b-2 border-[#8b5e3c]/50 pb-3 relative z-10">
+                  <h2 className="text-xl font-black text-[#f4e4bc] flex items-center gap-3 tracking-tighter italic">
+                    <Skull size={24} className="text-red-600 animate-pulse" /> {t.combatArena}
+                  </h2>
+                  <button 
+                    onClick={addMonster} 
+                    className="bg-[#8b5e3c] hover:bg-[#a67c52] text-white px-4 py-1.5 rounded-full text-xs font-black shadow-lg active:scale-95 transition-all flex items-center gap-2"
+                  >
+                    <Plus size={14} /> {t.addEnemy}
+                  </button>
+                </div>
+
+                {monsters.length > 0 ? (
+                  <div className="space-y-6 relative z-10">
+                    {monsters.map(monster => {
+                      const isCurrentCombat = combatRound.monsterId === monster.id;
+                      const pStrength = combatRound.playerRoll.reduce((a, b) => a + b, 0) + character.skill.current;
+                      const mStrength = combatRound.monsterRoll.reduce((a, b) => a + b, 0) + monster.skill;
+                      
+                      return (
+                        <div key={monster.id} className="bg-[#2a2a2a] border-2 border-[#8b5e3c] rounded-xl p-4 shadow-inner relative group">
+                          <button 
+                            onClick={() => removeMonster(monster.id)} 
+                            className="absolute -top-2 -left-2 bg-red-800 text-white p-1.5 rounded-full shadow-lg opacity-0 group-hover:opacity-100 transition-opacity z-20"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+
+                          {/* Monster Header */}
+                          <div className="flex items-center gap-4 mb-4">
+                            <div className="w-12 h-12 bg-red-900/30 border-2 border-red-700 rounded-full flex items-center justify-center text-red-500 shadow-[0_0_15px_rgba(185,28,28,0.3)]">
+                              <Skull size={24} />
+                            </div>
+                            <div className="flex-1">
+                              <input 
+                                value={monster.name}
+                                onChange={(e) => setMonsters(p => p.map(m => m.id === monster.id ? { ...m, name: e.target.value } : m))}
+                                className="text-lg font-black bg-transparent border-none p-0 focus:ring-0 text-[#f4e4bc] w-full"
+                              />
+                              <div className="flex gap-4 mt-1">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-[10px] uppercase tracking-widest text-gray-400 font-bold">{t.skill}</span>
+                                  <div className="flex items-center gap-2 bg-black/40 px-2 py-0.5 rounded-md border border-gray-700">
+                                    <button onClick={() => updateMonster(monster.id, 'skill', -1)} className="text-gray-500 hover:text-white"><Minus size={12} /></button>
+                                    <span className="font-mono font-bold text-white text-sm">{monster.skill}</span>
+                                    <button onClick={() => updateMonster(monster.id, 'skill', 1)} className="text-gray-500 hover:text-white"><Plus size={12} /></button>
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-[10px] uppercase tracking-widest text-gray-400 font-bold">{t.stamina}</span>
+                                  <div className="flex items-center gap-2 bg-black/40 px-2 py-0.5 rounded-md border border-red-900/50">
+                                    <button onClick={() => updateMonster(monster.id, 'stamina', -1)} className="text-red-500 hover:text-red-400"><Minus size={12} /></button>
+                                    <span className="font-mono font-bold text-red-500 text-sm">{monster.stamina}</span>
+                                    <button onClick={() => updateMonster(monster.id, 'stamina', 1)} className="text-red-500 hover:text-red-400"><Plus size={12} /></button>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Combat Console */}
+                          <div className="bg-black/60 rounded-xl p-4 border border-[#8b5e3c]/30 space-y-4">
+                            <div className="grid grid-cols-2 gap-4">
+                              {/* Player Side */}
+                              <div className="text-center space-y-2">
+                                <p className="text-[10px] font-black text-blue-400 uppercase tracking-widest">{t.you}</p>
+                                <div className="flex justify-center gap-1 h-8 items-center">
+                                  {isCurrentCombat && combatRound.playerRoll.map((v, i) => (
+                                    <motion.div key={i} initial={{ scale: 0 }} animate={{ scale: 1 }} className="text-blue-400">
+                                      <DieIcon val={v} size={20} />
+                                    </motion.div>
+                                  ))}
+                                </div>
+                                <div className="text-2xl font-black text-white font-mono">
+                                  {isCurrentCombat ? pStrength : '--'}
+                                </div>
+                              </div>
+
+                              {/* Monster Side */}
+                              <div className="text-center space-y-2 border-r border-gray-800">
+                                <p className="text-[10px] font-black text-red-500 uppercase tracking-widest">{t.enemy}</p>
+                                <div className="flex justify-center gap-1 h-8 items-center">
+                                  {isCurrentCombat && combatRound.monsterRoll.map((v, i) => (
+                                    <motion.div key={i} initial={{ scale: 0 }} animate={{ scale: 1 }} className="text-red-500">
+                                      <DieIcon val={v} size={20} />
+                                    </motion.div>
+                                  ))}
+                                </div>
+                                <div className="text-2xl font-black text-white font-mono">
+                                  {isCurrentCombat ? mStrength : '--'}
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Result Banner */}
+                            <AnimatePresence mode="wait">
+                              {isCurrentCombat && (
+                                <motion.div 
+                                  initial={{ opacity: 0, y: 5 }}
+                                  animate={{ opacity: 1, y: 0 }}
+                                  exit={{ opacity: 0 }}
+                                  className="space-y-2"
+                                >
+                                  {monster.stamina <= 0 ? (
+                                    <div className="bg-yellow-600/20 text-yellow-400 border border-yellow-600 py-3 rounded-lg font-black text-center text-sm animate-bounce">
+                                      ✨ {t.victory} {monster.name}! ✨
+                                    </div>
+                                  ) : character.stamina.current <= 0 ? (
+                                    <div className="bg-red-900/60 text-white border-2 border-red-600 py-3 rounded-lg font-black text-center text-sm">
+                                      💀 {t.defeat} 💀
+                                    </div>
+                                  ) : combatRound.result && (
+                                    <div className={`text-center py-2 rounded-lg font-black text-sm uppercase tracking-tighter ${
+                                      combatRound.result === 'win' ? 'bg-green-900/40 text-green-400 border border-green-700' :
+                                      combatRound.result === 'loss' ? 'bg-red-900/40 text-red-400 border border-red-700' :
+                                      'bg-gray-800 text-gray-400 border border-gray-600'
+                                    }`}>
+                                      {combatRound.result === 'win' ? t.hitEnemy : 
+                                       combatRound.result === 'loss' ? t.hitYou : t.drawRound}
+                                    </div>
+                                  )}
+                                </motion.div>
+                              )}
+                            </AnimatePresence>
+
+                            {/* Combat Actions */}
+                            <div className="grid grid-cols-1 gap-2">
+                              {monster.stamina > 0 && character.stamina.current > 0 && (
+                                <>
+                                  <button 
+                                    onClick={() => {
+                                      const pRoll = [rollDie(), rollDie()];
+                                      const mRoll = [rollDie(), rollDie()];
+                                      const ps = pRoll.reduce((a, b) => a + b, 0) + character.skill.current;
+                                      const ms = mRoll.reduce((a, b) => a + b, 0) + monster.skill;
+                                      setCombatRound({
+                                        playerRoll: pRoll,
+                                        monsterRoll: mRoll,
+                                        monsterId: monster.id,
+                                        result: ps > ms ? 'win' : ms > ps ? 'loss' : 'draw',
+                                        luckTested: false
+                                      });
+                                      setShake(true);
+                                      setTimeout(() => setShake(false), 300);
+                                    }}
+                                    className="w-full py-3 bg-[#8b5e3c] hover:bg-[#a67c52] text-white rounded-lg font-black text-sm shadow-lg flex items-center justify-center gap-2 active:scale-95 transition-all"
+                                  >
+                                    <Zap size={18} /> {t.rollCombatRound}
+                                  </button>
+
+                                  <button 
+                                    onClick={() => {
+                                      updateStat('stamina', -2);
+                                      setCombatRound(p => ({ ...p, result: null, monsterId: null }));
+                                      showMessage(t.fleeAlert);
+                                    }}
+                                    className="w-full py-2 bg-gray-800 hover:bg-gray-700 text-gray-400 border border-gray-600 rounded-lg text-[10px] font-bold"
+                                  >
+                                    {t.flee}
+                                  </button>
+                                </>
+                              )}
+
+                              {isCurrentCombat && combatRound.result && monster.stamina > 0 && character.stamina.current > 0 && (
+                                <div className="grid grid-cols-2 gap-2">
+                                  <button 
+                                    onClick={() => {
+                                      updateMonster(monster.id, 'stamina', -2);
+                                      setCombatRound(p => ({ ...p, result: null, monsterId: null }));
+                                    }}
+                                    className="py-2 bg-green-800/40 hover:bg-green-800/60 text-green-400 border border-green-700 rounded-lg text-[10px] font-bold"
+                                  >
+                                    {t.applyHit}
+                                  </button>
+                                  <button 
+                                    onClick={() => {
+                                      updateStat('stamina', -2);
+                                      setCombatRound(p => ({ ...p, result: null, monsterId: null }));
+                                    }}
+                                    className="py-2 bg-red-800/40 hover:bg-red-800/60 text-red-400 border border-red-700 rounded-lg text-[10px] font-bold"
+                                  >
+                                    {t.takeHit}
+                                  </button>
+                                  
+                                  {!combatRound.luckTested && (
+                                    <button 
+                                      onClick={() => {
+                                        const roll = rollDice(2);
+                                        const isLucky = roll <= character.luck.current;
+                                        if (isLucky) {
+                                          if (combatRound.result === 'win') {
+                                            showMessage(t.luckyHit);
+                                            updateMonster(monster.id, 'stamina', -4);
+                                          } else {
+                                            showMessage(t.luckyDodge);
+                                            updateStat('stamina', -1);
+                                          }
+                                        } else {
+                                          if (combatRound.result === 'win') {
+                                            showMessage(t.unluckyHit);
+                                            updateMonster(monster.id, 'stamina', -1);
+                                          } else {
+                                            showMessage(t.unluckyDodge);
+                                            updateStat('stamina', -3);
+                                          }
+                                        }
+                                        updateStat('luck', -1);
+                                        setCombatRound(p => ({ ...p, luckTested: true, result: null, monsterId: null }));
+                                      }}
+                                      className="col-span-2 py-2 bg-[#4a6d8c] hover:bg-[#5a7d9c] text-white rounded-lg text-[10px] font-bold flex items-center justify-center gap-2"
+                                    >
+                                      <Sparkles size={14} /> {t.testLuck}
+                                    </button>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="py-12 flex flex-col items-center justify-center opacity-30 space-y-4">
+                    <div className="w-16 h-16 border-2 border-dashed border-[#8b5e3c] rounded-full flex items-center justify-center">
+                      <Skull size={32} />
+                    </div>
+                    <p className="text-sm font-bold italic tracking-widest uppercase">{t.noMonsters}</p>
+                  </div>
+                )}
+              </section>
+
+              {/* Save Button */}
+              <button 
+                onClick={saveLogEntry}
+                className="w-full py-4 bg-[#2c1810] text-[#f4e4bc] rounded-xl text-xl font-bold shadow-xl active:scale-95 transition-transform flex items-center justify-center gap-3"
+              >
+                <Save size={24} /> {t.saveState}
+              </button>
+            </motion.div>
+          )}
+
+          {activeTab === 'history' && (
+            <motion.div 
+              key="history"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              className="space-y-4"
+            >
+              <h2 className="text-2xl font-bold border-b-2 border-[#8b5e3c] pb-2">{t.journeyLog}</h2>
+              <div className="space-y-3">
+                {log.map(entry => (
+                  <div key={entry.id} className="bg-[#fff9eb] border-2 border-[#8b5e3c] p-4 rounded-lg shadow-md flex items-center justify-between">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <p className="text-xl font-bold">{t.paragraph} {entry.paragraph}</p>
+                        <span className="text-[10px] bg-[#8b5e3c] text-white px-2 py-0.5 rounded-full">
+                          {entry.snapshot.name}
+                        </span>
+                      </div>
+                      <p className="text-sm opacity-80">{entry.note || t.noNote}</p>
+                      <div className="flex gap-2 mt-2 text-[10px] opacity-60">
+                        <span>{t.skill}: {entry.snapshot.skill.current}</span>
+                        <span>{t.stamina}: {entry.snapshot.stamina.current}</span>
+                        <span>{t.luck}: {entry.snapshot.luck.current}</span>
+                        <span>{t.gold}: {entry.snapshot.gold}</span>
+                      </div>
+                    </div>
+                    <button 
+                      onClick={() => revertToEntry(entry)}
+                      className="bg-[#8b5e3c] text-white p-2 rounded-lg flex items-center gap-1 text-xs"
+                    >
+                      <Undo2 size={16} /> {t.revert}
+                    </button>
+                  </div>
+                ))}
+                {log.length === 0 && (
+                  <div className="text-center py-12 opacity-50 italic">
+                    <History size={48} className="mx-auto mb-4" />
+                    <p>{t.noParagraphs}</p>
+                  </div>
+                )}
+              </div>
+              
+              <button 
+                onClick={() => {
+                  setConfirmModal({
+                    isOpen: true,
+                    title: t.resetTitle,
+                    message: t.resetMessage,
+                    onConfirm: resetAdventure
+                  });
+                }}
+                className="w-full py-3 border-2 border-red-700 text-red-700 rounded-lg font-bold mt-8 hover:bg-red-50 transition-colors"
+              >
+                {t.resetAdventure}
+              </button>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </main>
+
+      {/* Navigation Footer */}
+      <nav className="fixed bottom-0 left-0 w-full bg-[#fff9eb] border-t-4 border-[#8b5e3c] p-2 pb-6 z-40 shadow-[0_-4px_10px_rgba(0,0,0,0.1)]">
+        <div className="max-w-2xl mx-auto flex justify-around">
+          <NavButton active={activeTab === 'current'} onClick={() => setActiveTab('current')} icon={<BookOpen />} label={t.navCurrent} />
+          <NavButton active={activeTab === 'history'} onClick={() => setActiveTab('history')} icon={<History />} label={t.navHistory} />
+        </div>
+      </nav>
+
+      {/* Confirmation Modal */}
+      <AnimatePresence>
+        {confirmModal.isOpen && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setConfirmModal(p => ({ ...p, isOpen: false }))}
+              className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              className="relative w-full max-w-sm bg-[#fff9eb] border-4 border-[#8b5e3c] rounded-2xl p-6 shadow-2xl text-center"
+            >
+              <h3 className="text-xl font-bold text-[#2c1810] mb-2">{confirmModal.title}</h3>
+              <p className="text-sm opacity-70 mb-6">{confirmModal.message}</p>
+              
+              <div className="flex gap-3">
+                <button 
+                  onClick={() => setConfirmModal(p => ({ ...p, isOpen: false }))}
+                  className="flex-1 py-3 bg-gray-200 text-gray-700 rounded-xl font-bold hover:bg-gray-300 transition-colors"
+                >
+                  {t.cancel}
+                </button>
+                <button 
+                  onClick={confirmModal.onConfirm}
+                  className="flex-1 py-3 bg-[#8b5e3c] text-white rounded-xl font-bold hover:bg-[#6d4a30] shadow-lg transition-colors"
+                >
+                  {t.confirm}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Spell List Modal */}
+      <AnimatePresence>
+        {showSpellList && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm"
+            onClick={() => setShowSpellList(false)}
+          >
+            <motion.div 
+              initial={{ scale: 0.9, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.9, y: 20 }}
+              className="bg-[#fff9eb] border-4 border-[#8b5e3c] rounded-lg w-full max-w-md max-h-[80vh] overflow-hidden flex flex-col"
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="p-4 border-b-2 border-[#8b5e3c] bg-[#e8d5a7] flex justify-between items-center">
+                <h3 className="text-xl font-bold">{t.spellBookTitle}</h3>
+                <button onClick={() => setShowSpellList(false)} className="text-[#8b5e3c] font-bold">X</button>
+              </div>
+              <div className="flex-1 overflow-y-auto p-4 space-y-2">
+                {Object.values(SPELLS).map(spell => (
+                  <div key={spell.code} className="flex items-center justify-between p-2 border-b border-[#8b5e3c]/20">
+                    <div>
+                      <span className="font-bold text-lg tracking-widest">{spell.code}</span>
+                      <span className="mr-3 text-sm opacity-80">{(t.spells as any)[spell.code] || spell.description}</span>
+                    </div>
+                    <span className="text-red-700 font-bold">-{spell.cost} {t.staminaCost}</span>
+                  </div>
+                ))}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <style>{`
+        @keyframes shake {
+          0%, 100% { transform: translateX(0); }
+          25% { transform: translateX(-10px); }
+          75% { transform: translateX(10px); }
+        }
+        .animate-shake {
+          animation: shake 0.1s ease-in-out 0s 5;
+        }
+        @keyframes pulse-red {
+          0%, 100% { background-color: rgba(185, 28, 28, 0.2); }
+          50% { background-color: rgba(185, 28, 28, 0.6); }
+        }
+        .animate-pulse-red {
+          animation: pulse-red 1s infinite;
+        }
+      `}</style>
+    </div>
+  );
+}
