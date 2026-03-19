@@ -32,7 +32,9 @@ import {
   Undo2,
   Zap,
   AlertCircle,
-  X
+  X,
+  Download,
+  Upload
 } from 'lucide-react';
 import { GameClass, CharacterState, LogEntry, Stats, Monster } from './types.ts';
 import { SPELLS, WIZARD_NAMES } from './constants.ts';
@@ -44,6 +46,7 @@ const rollDice = (count: number) => Array.from({ length: count }, rollDie).reduc
 
 const INITIAL_CHARACTER: CharacterState = {
   name: '',
+  bookName: '',
   class: null,
   skill: { current: 0, max: 0 },
   stamina: { current: 0, max: 0 },
@@ -376,6 +379,58 @@ export default function App() {
     setActiveTab('current');
   };
 
+  const saveGameToFile = () => {
+    const gameState = {
+      character,
+      log,
+      monsters,
+      isInitialized,
+      language,
+      version: '1.0'
+    };
+    const blob = new Blob([JSON.stringify(gameState, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const bookPrefix = character.bookName ? `${character.bookName.replace(/\s+/g, '_')}_` : '';
+    a.download = `sorcery_save_${bookPrefix}${character.name || 'hero'}_${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const loadGameFromFile = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const content = e.target?.result as string;
+        const data = JSON.parse(content);
+        
+        // Basic validation
+        if (data.character && data.log) {
+          setCharacter(data.character);
+          setLog(data.log);
+          if (data.monsters) setMonsters(data.monsters);
+          if (data.isInitialized !== undefined) setIsInitialized(data.isInitialized);
+          if (data.language) setLanguage(data.language);
+          showMessage(t.loadSuccess);
+        } else {
+          showMessage(t.loadError);
+        }
+      } catch (err) {
+        console.error('Error loading save file:', err);
+        showMessage(t.loadError);
+      }
+    };
+    reader.readAsText(file);
+    // Reset input
+    event.target.value = '';
+  };
+
   const useLibra = () => {
     if (!character.libraUsed) {
       setConfirmModal({
@@ -452,17 +507,34 @@ export default function App() {
           <div className="absolute top-0 left-0 w-full h-2 bg-[#8b5e3c]" />
           <div className="flex justify-between items-center mb-6 border-b-2 border-[#8b5e3c] pb-4">
             <h1 className="text-4xl font-bold">{t.title}</h1>
-            <button 
-              onClick={() => setLanguage(l => l === 'he' ? 'en' : 'he')}
-              className="px-2 py-1 bg-[#8b5e3c] text-white rounded-lg text-xs font-bold"
-            >
-              {language === 'he' ? 'English' : 'עברית'}
-            </button>
+            <div className="flex items-center gap-2">
+              <label className="p-1.5 bg-[#8b5e3c] text-white rounded-lg hover:bg-[#6d4a30] transition-colors cursor-pointer" title={t.loadFile}>
+                <Upload size={16} />
+                <input type="file" accept=".json" onChange={loadGameFromFile} className="hidden" />
+              </label>
+              <button 
+                onClick={() => setLanguage(l => l === 'he' ? 'en' : 'he')}
+                className="px-2 py-1 bg-[#8b5e3c] text-white rounded-lg text-xs font-bold"
+              >
+                {language === 'he' ? 'English' : 'עברית'}
+              </button>
+            </div>
           </div>
           <p className="text-lg mb-8 text-center italic">{t.subtitle}</p>
           
           {!character.class ? (
             <div className="space-y-6">
+              <div className="space-y-3">
+                <label className="block text-sm font-bold opacity-70">{t.bookName}</label>
+                <input 
+                  type="text" 
+                  value={character.bookName}
+                  onChange={(e) => setCharacter(prev => ({ ...prev, bookName: e.target.value }))}
+                  placeholder={t.placeholderBook}
+                  className="w-full p-3 bg-white border-2 border-[#8b5e3c] rounded-lg text-lg focus:outline-none focus:ring-2 focus:ring-[#8b5e3c]/50"
+                />
+              </div>
+
               <div className="space-y-3">
                 <label className="block text-sm font-bold opacity-70">{t.characterName}</label>
                 <input 
@@ -518,7 +590,12 @@ export default function App() {
             </div>
           ) : (
             <div className="space-y-6">
-              <div className="text-center space-y-2">
+              <div className="text-center space-y-1">
+                {character.bookName && (
+                  <p className="text-[10px] uppercase tracking-widest font-bold opacity-50">
+                    {character.bookName}
+                  </p>
+                )}
                 <h2 className="text-3xl font-bold text-[#8b5e3c]">{character.name}</h2>
                 <p className="text-sm opacity-70 italic">
                   {character.class === 'Warrior' ? t.warrior : t.sorcerer} {t.brave}
@@ -667,18 +744,38 @@ export default function App() {
       <header className="bg-[#fff9eb] border-b-4 border-[#8b5e3c] p-2 sticky top-0 z-30 shadow-md">
         <div className="max-w-2xl mx-auto space-y-2">
           <div className="flex items-center justify-between px-2">
-            <div className="flex items-center gap-2">
-              <h1 className="text-xl font-bold text-[#8b5e3c]">{character.name}</h1>
-              <span className="text-xs opacity-60 font-bold italic">
-                {character.class === 'Warrior' ? t.warrior : t.sorcerer}
-              </span>
+            <div className="flex flex-col">
+              {character.bookName && (
+                <span className="text-[10px] uppercase tracking-widest font-bold opacity-50 -mb-1">
+                  {character.bookName}
+                </span>
+              )}
+              <div className="flex items-center gap-2">
+                <h1 className="text-xl font-bold text-[#8b5e3c]">{character.name}</h1>
+                <span className="text-xs opacity-60 font-bold italic">
+                  {character.class === 'Warrior' ? t.warrior : t.sorcerer}
+                </span>
+              </div>
             </div>
-            <button 
-              onClick={() => setLanguage(l => l === 'he' ? 'en' : 'he')}
-              className="px-2 py-1 bg-[#8b5e3c] text-white rounded-lg text-xs font-bold"
-            >
-              {language === 'he' ? 'English' : 'עברית'}
-            </button>
+            <div className="flex items-center gap-2">
+              <button 
+                onClick={saveGameToFile}
+                className="p-1.5 bg-[#8b5e3c] text-white rounded-lg hover:bg-[#6d4a30] transition-colors"
+                title={t.saveFile}
+              >
+                <Download size={16} />
+              </button>
+              <label className="p-1.5 bg-[#8b5e3c] text-white rounded-lg hover:bg-[#6d4a30] transition-colors cursor-pointer" title={t.loadFile}>
+                <Upload size={16} />
+                <input type="file" accept=".json" onChange={loadGameFromFile} className="hidden" />
+              </label>
+              <button 
+                onClick={() => setLanguage(l => l === 'he' ? 'en' : 'he')}
+                className="px-2 py-1 bg-[#8b5e3c] text-white rounded-lg text-xs font-bold"
+              >
+                {language === 'he' ? 'English' : 'עברית'}
+              </button>
+            </div>
           </div>
           <div className="grid grid-cols-4 gap-1">
             <StatBox 

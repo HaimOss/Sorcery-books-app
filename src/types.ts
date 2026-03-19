@@ -7,6 +7,7 @@ export interface Stats {
 
 export interface CharacterState {
   name: string;
+  bookName: string;
   class: GameClass | null;
   skill: Stats;
   stamina: Stats;
