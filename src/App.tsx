@@ -38,9 +38,12 @@ import {
   ChevronDown,
   ChevronUp,
   Map,
-  Wind
+  Wind,
+  Moon,
+  Sun,
+  Home
 } from 'lucide-react';
-import { GameClass, CharacterState, LogEntry, Stats, Monster } from './types.ts';
+import { GameClass, CharacterState, LogEntry, Stats, Monster, GameSession } from './types.ts';
 import { SPELLS, WIZARD_NAMES } from './constants.ts';
 import { TRANSLATIONS, Language } from './translations.ts';
 
@@ -176,9 +179,13 @@ const getSnapshotDiff = (current: CharacterState, previous?: CharacterState) => 
 };
 
 export default function App() {
+  const [view, setView] = useState<'management' | 'new-game' | 'playing'>('management');
+  const [sessions, setSessions] = useState<GameSession[]>([]);
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const [darkMode, setDarkMode] = useState(false);
+  
   const [character, setCharacter] = useState<CharacterState>(INITIAL_CHARACTER);
   const [log, setLog] = useState<LogEntry[]>([]);
-  const [isInitialized, setIsInitialized] = useState(false);
   const [isRolling, setIsRolling] = useState(false);
   const [shake, setShake] = useState(false);
   const [activeTab, setActiveTab] = useState<'current' | 'history'>('current');
@@ -242,21 +249,70 @@ export default function App() {
 
   // --- Persistence ---
   useEffect(() => {
-    const savedState = localStorage.getItem('sorcery_game_state');
-    if (savedState) {
-      const { character: savedChar, log: savedLog, isInitialized: savedInit, language: savedLang } = JSON.parse(savedState);
-      setCharacter(savedChar);
-      setLog(savedLog);
-      setIsInitialized(savedInit);
-      if (savedLang) setLanguage(savedLang);
+    const savedSessions = localStorage.getItem('sorcery_sessions');
+    if (savedSessions) {
+      setSessions(JSON.parse(savedSessions));
+    } else {
+      const savedState = localStorage.getItem('sorcery_game_state');
+      if (savedState) {
+        const { character: savedChar, log: savedLog, isInitialized: savedInit, language: savedLang } = JSON.parse(savedState);
+        if (savedInit) {
+          const migratedSession: GameSession = {
+            id: crypto.randomUUID(),
+            bookName: savedChar.bookName || 'Unknown Book',
+            startDate: Date.now(),
+            lastPlayedDate: Date.now(),
+            paragraphsVisited: savedLog.length,
+            isFinished: savedChar.stamina.current <= 0,
+            character: savedChar,
+            log: savedLog
+          };
+          setSessions([migratedSession]);
+        }
+        if (savedLang) setLanguage(savedLang);
+      }
+    }
+    
+    const savedDarkMode = localStorage.getItem('sorcery_dark_mode');
+    if (savedDarkMode) {
+      setDarkMode(savedDarkMode === 'true');
     }
   }, []);
 
   useEffect(() => {
-    if (isInitialized) {
-      localStorage.setItem('sorcery_game_state', JSON.stringify({ character, log, isInitialized, language }));
+    if (sessions.length > 0) {
+      localStorage.setItem('sorcery_sessions', JSON.stringify(sessions));
+    } else {
+      localStorage.removeItem('sorcery_sessions');
     }
-  }, [character, log, isInitialized, language]);
+  }, [sessions]);
+
+  useEffect(() => {
+    localStorage.setItem('sorcery_dark_mode', darkMode.toString());
+    if (darkMode) {
+      document.documentElement.classList.add('theme-dark');
+    } else {
+      document.documentElement.classList.remove('theme-dark');
+    }
+  }, [darkMode]);
+
+  useEffect(() => {
+    if (view === 'playing' && currentSessionId) {
+      setSessions(prev => prev.map(s => {
+        if (s.id === currentSessionId) {
+          return {
+            ...s,
+            character,
+            log,
+            lastPlayedDate: Date.now(),
+            paragraphsVisited: log.length,
+            isFinished: character.stamina.current <= 0
+          };
+        }
+        return s;
+      }));
+    }
+  }, [character, log, view, currentSessionId]);
 
   // --- Actions ---
   const triggerShake = () => {
@@ -378,6 +434,7 @@ export default function App() {
       note: noteInput,
       timestamp: Date.now(),
       snapshot: JSON.parse(JSON.stringify(character)),
+      monsters: monsters.length > 0 ? JSON.parse(JSON.stringify(monsters)) : undefined,
     };
     setLog([newEntry, ...log]);
     setParagraphInput('');
@@ -402,14 +459,21 @@ export default function App() {
     });
   };
 
-  const resetAdventure = () => {
+  const goHome = () => {
     setCharacter(INITIAL_CHARACTER);
     setLog([]);
-    setIsInitialized(false);
     setMonsters([]);
     setDeltas({ skill: 0, stamina: 0, luck: 0, gold: 0, provisions: 0 });
-    localStorage.removeItem('sorcery_game_state');
+    setCurrentSessionId(null);
+    setView('management');
     setActiveTab('current');
+  };
+
+  const resetAdventure = () => {
+    if (currentSessionId) {
+      setSessions(prev => prev.filter(s => s.id !== currentSessionId));
+    }
+    goHome();
   };
 
   const saveGameToFile = () => {
@@ -417,15 +481,14 @@ export default function App() {
       character,
       log,
       monsters,
-      isInitialized,
       language,
-      version: '1.0'
+      version: '1.1'
     };
     const blob = new Blob([JSON.stringify(gameState, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    const bookPrefix = character.bookName ? `${character.bookName.replace(/\s+/g, '_')}_` : '';
+    const bookPrefix = character.bookName ? `${character.bookName.replace(/\\s+/g, '_')}_` : '';
     a.download = `sorcery_save_${bookPrefix}${character.name || 'hero'}_${new Date().toISOString().slice(0, 10)}.json`;
     document.body.appendChild(a);
     a.click();
@@ -448,8 +511,22 @@ export default function App() {
           setCharacter(data.character);
           setLog(data.log);
           if (data.monsters) setMonsters(data.monsters);
-          if (data.isInitialized !== undefined) setIsInitialized(data.isInitialized);
           if (data.language) setLanguage(data.language);
+          
+          const newSession: GameSession = {
+            id: crypto.randomUUID(),
+            bookName: data.character.bookName || t.placeholderBook,
+            startDate: Date.now(),
+            lastPlayedDate: Date.now(),
+            paragraphsVisited: data.log.length,
+            isFinished: data.character.stamina.current <= 0,
+            character: data.character,
+            log: data.log
+          };
+          
+          setSessions(prev => [...prev, newSession]);
+          setCurrentSessionId(newSession.id);
+          setView('playing');
           showMessage(t.loadSuccess);
         } else {
           showMessage(t.loadError);
@@ -523,15 +600,171 @@ export default function App() {
   };
 
   const finalizeCharacter = () => {
-    setCharacter(prev => ({
-      ...prev,
+    const newChar = {
+      ...character,
       items: [t.sword]
-    }));
-    setIsInitialized(true);
+    };
+    setCharacter(newChar);
+    
+    const newSession: GameSession = {
+      id: crypto.randomUUID(),
+      bookName: newChar.bookName || t.placeholderBook,
+      startDate: Date.now(),
+      lastPlayedDate: Date.now(),
+      paragraphsVisited: 0,
+      isFinished: false,
+      character: newChar,
+      log: []
+    };
+    
+    setSessions(prev => [...prev, newSession]);
+    setCurrentSessionId(newSession.id);
+    setView('playing');
   };
 
   // --- Render Helpers ---
-  if (!isInitialized) {
+  if (view === 'management') {
+    return (
+      <div className={`min-h-screen bg-[#f4e4bc] text-[#2c1810] font-serif p-4 sm:p-8 flex flex-col items-center ${language === 'he' ? 'text-right' : 'text-left'}`} dir={language === 'he' ? 'rtl' : 'ltr'}>
+        <div className="fixed top-4 right-4 flex gap-2 z-50">
+          <button onClick={() => setDarkMode(!darkMode)} className="p-2.5 bg-[#8b5e3c] text-white rounded-xl shadow-lg hover:bg-[#6d4a30] transition-all active:scale-95" title={darkMode ? t.lightMode : t.darkMode}>
+            {darkMode ? <Sun size={24} /> : <Moon size={24} />}
+          </button>
+          <button onClick={() => setLanguage(l => l === 'he' ? 'en' : 'he')} className="p-2.5 bg-[#8b5e3c] text-white rounded-xl shadow-lg hover:bg-[#6d4a30] transition-all active:scale-95 font-bold min-w-[48px]">
+            {language === 'he' ? 'EN' : 'עב'}
+          </button>
+        </div>
+        
+        <motion.div 
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="max-w-5xl w-full mt-12 mb-12"
+        >
+          {currentSessionId && (
+            <div className="flex justify-start mb-6">
+              <button 
+                onClick={() => setView('playing')}
+                className="flex items-center gap-2 px-4 py-2 bg-[#3a2210] text-[#f4e4bc] rounded-xl font-bold shadow-lg hover:bg-[#2c1810] transition-all active:scale-95"
+              >
+                <Undo2 size={20} />
+                {t.backToGame}
+              </button>
+            </div>
+          )}
+          
+          <div className="text-center mb-12">
+            <h1 className="text-5xl sm:text-7xl font-bold mb-4 tracking-tighter text-[#3a2210] drop-shadow-sm">{t.gameManagement}</h1>
+            <div className="h-1 w-32 bg-[#8b5e3c] mx-auto rounded-full opacity-50" />
+          </div>
+          
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 mb-12">
+            <button 
+              onClick={() => {
+                setCharacter(INITIAL_CHARACTER);
+                setView('new-game');
+              }}
+              className="group relative overflow-hidden bg-[#8b5e3c] text-white rounded-2xl p-8 shadow-xl hover:shadow-2xl transition-all hover:-translate-y-1 flex flex-col items-center justify-center gap-4"
+            >
+              <div className="absolute inset-0 bg-black/10 opacity-0 group-hover:opacity-100 transition-opacity" />
+              <div className="bg-white/20 p-4 rounded-full">
+                <Plus size={48} />
+              </div>
+              <span className="text-2xl font-bold">{t.newGame}</span>
+            </button>
+            
+            <label className="group relative overflow-hidden bg-[#fff9eb] border-4 border-[#8b5e3c] text-[#8b5e3c] rounded-2xl p-8 shadow-xl hover:shadow-2xl transition-all hover:-translate-y-1 flex flex-col items-center justify-center gap-4 cursor-pointer">
+              <div className="absolute inset-0 bg-[#8b5e3c]/5 opacity-0 group-hover:opacity-100 transition-opacity" />
+              <div className="bg-[#8b5e3c]/10 p-4 rounded-full">
+                <Upload size={48} />
+              </div>
+              <span className="text-2xl font-bold">{t.loadFile}</span>
+              <input type="file" accept=".json" onChange={loadGameFromFile} className="hidden" />
+            </label>
+          </div>
+
+          <h2 className="text-2xl font-bold mb-6 flex items-center gap-3 opacity-80">
+            <History size={24} />
+            {t.navHistory}
+          </h2>
+
+          {sessions.length === 0 ? (
+            <div className="bg-[#fff9eb]/50 border-4 border-dashed border-[#8b5e3c]/20 rounded-3xl py-20 text-center text-[#8b5e3c]/40 italic">
+              <History size={64} className="mx-auto mb-4 opacity-20" />
+              <p className="text-xl">{t.noLogs}</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {sessions.sort((a, b) => b.lastPlayedDate - a.lastPlayedDate).map(session => (
+                <motion.div 
+                  key={session.id} 
+                  layout
+                  className="bg-[#fff9eb] border-4 border-[#8b5e3c] rounded-2xl p-6 shadow-lg hover:shadow-xl transition-all flex flex-col justify-between relative overflow-hidden group"
+                >
+                  <div className="absolute top-0 left-0 w-full h-1.5 bg-[#8b5e3c] opacity-30" />
+                  
+                  <div>
+                    <div className="flex justify-between items-start mb-4">
+                      <div>
+                        <h3 className="font-bold text-2xl text-[#3a2210] mb-1">{session.bookName}</h3>
+                        <p className="text-lg text-[#8b5e3c] font-bold">{session.character.name}</p>
+                      </div>
+                      <div className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider ${session.isFinished ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
+                        {session.isFinished ? t.finished : t.inProgress}
+                      </div>
+                    </div>
+                    
+                    <div className="grid grid-cols-2 gap-4 text-sm mb-6 bg-[#f4e4bc]/40 p-3 rounded-xl">
+                      <div className="flex flex-col">
+                        <span className="opacity-50 text-[10px] uppercase font-bold">{t.startDate}</span>
+                        <span className="font-bold">{new Date(session.startDate).toLocaleDateString()}</span>
+                      </div>
+                      <div className="flex flex-col">
+                        <span className="opacity-50 text-[10px] uppercase font-bold">{t.paragraphsVisited}</span>
+                        <span className="font-bold">{session.paragraphsVisited}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex gap-3">
+                    <button 
+                      onClick={() => {
+                        setCharacter(session.character);
+                        setLog(session.log);
+                        setCurrentSessionId(session.id);
+                        setView('playing');
+                      }}
+                      className="flex-1 py-3 bg-[#8b5e3c] text-white rounded-xl hover:bg-[#6d4a30] transition-all font-bold shadow-md active:scale-95"
+                    >
+                      {t.continueGame}
+                    </button>
+                    <button 
+                      onClick={() => {
+                        setConfirmModal({
+                          isOpen: true,
+                          title: t.deleteGame,
+                          message: t.resetConfirm,
+                          onConfirm: () => {
+                            setSessions(prev => prev.filter(s => s.id !== session.id));
+                            setConfirmModal(p => ({ ...p, isOpen: false }));
+                          }
+                        });
+                      }}
+                      className="p-3 bg-red-50 text-red-600 border-2 border-red-100 rounded-xl hover:bg-red-100 transition-all active:scale-95"
+                      title={t.deleteGame}
+                    >
+                      <Trash2 size={24} />
+                    </button>
+                  </div>
+                </motion.div>
+              ))}
+            </div>
+          )}
+        </motion.div>
+      </div>
+    );
+  }
+
+  if (view === 'new-game') {
     return (
       <div className={`min-h-screen bg-[#f4e4bc] text-[#2c1810] font-serif p-6 flex flex-col items-center justify-center ${language === 'he' ? 'text-right' : 'text-left'}`} dir={language === 'he' ? 'rtl' : 'ltr'}>
         <motion.div 
@@ -726,10 +959,10 @@ export default function App() {
             {t.diedAt} {log[0]?.paragraph || '??'}
           </p>
           <button 
-            onClick={resetAdventure}
+            onClick={goHome}
             className="px-12 py-4 bg-red-700 text-white rounded-xl text-2xl font-bold hover:bg-red-800 shadow-[0_0_30px_rgba(185,28,28,0.5)] transition-all active:scale-95"
           >
-            {t.restart}
+            {t.gameManagement}
           </button>
         </motion.div>
       </div>
@@ -794,6 +1027,12 @@ export default function App() {
               </div>
             </div>
             <div className="flex items-center gap-2">
+              <button onClick={() => setView('management')} className="p-1.5 bg-[#8b5e3c] text-white rounded-lg hover:bg-[#6d4a30] transition-colors" title={t.gameManagement}>
+                <Home size={16} />
+              </button>
+              <button onClick={() => setDarkMode(!darkMode)} className="p-1.5 bg-[#8b5e3c] text-white rounded-lg hover:bg-[#6d4a30] transition-colors" title={darkMode ? t.lightMode : t.darkMode}>
+                {darkMode ? <Sun size={16} /> : <Moon size={16} />}
+              </button>
               <button 
                 onClick={saveGameToFile}
                 className="p-1.5 bg-[#8b5e3c] text-white rounded-lg hover:bg-[#6d4a30] transition-colors"
@@ -854,24 +1093,24 @@ export default function App() {
             >
               {/* Paragraph Info */}
               <section className="bg-[#fff9eb] border-2 border-[#8b5e3c] rounded-lg p-4 shadow-md">
-                <div className="flex gap-3">
+                <div className="flex gap-3 items-end">
                   <div className="flex-1">
-                    <label className="block text-[10px] font-bold mb-1 opacity-70">{t.currentParagraph}</label>
+                    <label className="block text-[10px] font-bold mb-1 opacity-70 leading-tight min-h-[24px] flex items-end">{t.currentParagraph}</label>
                     <input 
                       type="number"
                       value={paragraphInput}
                       onChange={(e) => setParagraphInput(e.target.value)}
                       placeholder="#"
-                      className="w-full bg-[#e8d5a7] border-2 border-[#8b5e3c] rounded-lg p-2 text-xl font-bold focus:ring-0 text-center"
+                      className="w-full h-11 bg-[#e8d5a7] border-2 border-[#8b5e3c] rounded-lg p-2 text-xl font-bold focus:ring-0 text-center"
                     />
                   </div>
                   <div className="flex-[3]">
-                    <label className="block text-[10px] font-bold mb-1 opacity-70">{t.paragraphNote}</label>
+                    <label className="block text-[10px] font-bold mb-1 opacity-70 leading-tight min-h-[24px] flex items-end">{t.paragraphNote}</label>
                     <input 
                       value={noteInput}
                       onChange={(e) => setNoteInput(e.target.value)}
                       placeholder={t.notePlaceholder}
-                      className="w-full bg-[#e8d5a7] border-2 border-[#8b5e3c] rounded-lg p-2 focus:ring-0"
+                      className="w-full h-11 bg-[#e8d5a7] border-2 border-[#8b5e3c] rounded-lg p-2 focus:ring-0"
                     />
                   </div>
                 </div>
@@ -918,87 +1157,155 @@ export default function App() {
                     </div>
                   </div>
 
-                  <div>
-                    <div className="flex justify-between items-center mb-2">
+                  <div className="mt-4">
+                    <div className="flex justify-between items-center mb-4">
                       <p className="text-xs font-bold opacity-70">{t.inventory}</p>
-                      <button 
-                        onClick={() => {
-                          setConfirmModal({
-                            isOpen: true,
-                            title: t.endDay,
-                            message: t.dayEndConfirm,
-                            onConfirm: () => {
-                              if (character.provisions > 0) {
-                                setCharacter(p => ({ ...p, provisions: p.provisions - 1, day: (p.day || 1) + 1 }));
-                                showMessage(t.dayEndProvisionUsed);
-                              } else {
-                                showMessage(t.dayEndNoFood);
-                                updateStat('stamina', -3);
-                                setCharacter(p => ({ ...p, day: (p.day || 1) + 1 }));
-                              }
-                              setConfirmModal(p => ({ ...p, isOpen: false }));
-                            }
-                          });
-                        }}
-                        className="text-[10px] font-bold bg-[#8b5e3c] text-white px-2 py-0.5 rounded-full"
-                      >
-                        {t.endDay}
-                      </button>
                     </div>
-                    <div className="flex flex-wrap gap-2">
-                      {character.items.filter(i => !t.specialItemsList.includes(i)).map((item, i) => (
-                        <span key={i} className="px-2 py-1 bg-[#e8d5a7] border border-[#8b5e3c] rounded-full text-[10px] flex items-center gap-1">
-                          {item}
-                          <button onClick={() => setCharacter(p => ({ ...p, items: p.items.filter((_, idx) => idx !== character.items.indexOf(item)) }))}><Trash2 size={10} /></button>
-                        </span>
-                      ))}
-                      {showItemInput ? (
-                        <div className="flex items-center gap-2">
-                          <input 
-                            autoFocus
-                            value={itemInput}
-                            onChange={(e) => setItemInput(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter' && itemInput.trim()) {
-                                setCharacter(p => ({ ...p, items: [...p.items, itemInput.trim()] }));
-                                setItemInput('');
-                                setShowItemInput(false);
-                              } else if (e.key === 'Escape') {
-                                setShowItemInput(false);
-                              }
-                            }}
-                            className="px-2 py-1 bg-[#e8d5a7] border border-[#8b5e3c] rounded-full text-[10px] w-24 outline-none"
-                            placeholder={t.addItem}
-                          />
-                          <button onClick={() => setShowItemInput(false)} className="text-[#8b5e3c]"><X size={10} /></button>
+                    
+                    {/* The Satchel */}
+                    <div className="relative mt-8 mb-4 max-w-sm mx-auto">
+                      {/* Shoulder Strap */}
+                      <div className="absolute -top-6 -left-4 -right-4 h-16 border-t-[12px] border-[#4a2e1b] rounded-t-[100px] z-0 opacity-90"></div>
+                      
+                      {/* Main Bag Body */}
+                      <div className="bg-[#8b5a2b] border-4 border-[#3a2210] rounded-b-[40px] rounded-t-[10px] p-4 pt-12 shadow-[0_10px_20px_rgba(58,34,16,0.5)] relative z-10">
+                        
+                        {/* Bag Flap */}
+                        <div className="absolute top-0 left-0 right-0 h-24 bg-[#a06b35] border-b-4 border-x-4 border-[#3a2210] rounded-t-[6px] rounded-b-[50%] shadow-[0_4px_8px_rgba(0,0,0,0.3)] z-20 overflow-hidden">
+                          {/* Flap Stitching */}
+                          <div className="absolute inset-1 border-2 border-dashed border-[#e8d5a7] opacity-40 rounded-t-[4px] rounded-b-[50%] pointer-events-none"></div>
                         </div>
-                      ) : (
-                        <button 
-                          onClick={() => setShowItemInput(true)}
-                          className="px-2 py-1 border border-dashed border-[#8b5e3c] rounded-full text-[10px] flex items-center gap-1"
-                        >
-                          <Plus size={10} /> {t.add}
-                        </button>
-                      )}
+                        
+                        {/* Left Strap */}
+                        <div className="absolute top-0 left-1/4 w-6 h-32 bg-[#4a2e1b] border-x-2 border-[#3a2210] z-30 flex flex-col items-center justify-end pb-2 shadow-md">
+                          {/* Buckle */}
+                          <div className="w-8 h-8 border-4 border-[#d4af37] rounded-md bg-transparent flex items-center justify-center shadow-sm">
+                            <div className="w-1 h-4 bg-[#d4af37]"></div>
+                          </div>
+                        </div>
+
+                        {/* Right Strap */}
+                        <div className="absolute top-0 right-1/4 w-6 h-32 bg-[#4a2e1b] border-x-2 border-[#3a2210] z-30 flex flex-col items-center justify-end pb-2 shadow-md">
+                          {/* Buckle */}
+                          <div className="w-8 h-8 border-4 border-[#d4af37] rounded-md bg-transparent flex items-center justify-center shadow-sm">
+                            <div className="w-1 h-4 bg-[#d4af37]"></div>
+                          </div>
+                        </div>
+
+                        {/* Stitching on main body */}
+                        <div className="absolute inset-2 border-2 border-dashed border-[#e8d5a7] opacity-30 rounded-b-[32px] rounded-t-[8px] pointer-events-none z-10"></div>
+                        
+                        {/* Content Area (Inside the bag) */}
+                        <div className="relative z-40 mt-16 bg-[#3a2210] rounded-xl p-3 shadow-inner border-2 border-[#2a180b] min-h-[100px] flex flex-col gap-2">
+                          {Object.entries(
+                          character.items.filter(i => !t.specialItemsList.includes(i)).reduce((acc, item) => {
+                            acc[item] = (acc[item] || 0) + 1;
+                            return acc;
+                          }, {} as Record<string, number>)
+                        ).map(([item, count], i) => (
+                          <div key={i} className="flex items-center justify-between bg-[#e8d5a7] border-2 border-[#8b5e3c] rounded-md p-2 shadow-sm">
+                            <span className="font-bold text-sm text-[#3a2210]">{item}</span>
+                            <div className="flex items-center gap-3">
+                              <span className="text-xs font-bold text-[#5c3a21]">{t.quantity} {count}</span>
+                              <div className="flex gap-1">
+                                <button 
+                                  onClick={() => {
+                                    const index = character.items.indexOf(item);
+                                    if (index > -1) {
+                                      setCharacter(p => ({ ...p, items: p.items.filter((_, idx) => idx !== index) }));
+                                    }
+                                  }}
+                                  className="text-[10px] font-bold bg-[#8b5e3c] text-white px-2 py-1 rounded shadow-sm active:scale-95"
+                                >
+                                  {t.useItem}
+                                </button>
+                                <button 
+                                  onClick={() => setCharacter(p => ({ ...p, items: p.items.filter(i => i !== item) }))}
+                                  className="text-[#8b5e3c] hover:text-red-700 p-1"
+                                >
+                                  <Trash2 size={14} />
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                        
+                        <div className="mt-2">
+                          {showItemInput ? (
+                            <div className="flex items-center gap-2 bg-[#e8d5a7] p-1 rounded-md border-2 border-[#8b5e3c]">
+                              <input 
+                                autoFocus
+                                value={itemInput}
+                                onChange={(e) => setItemInput(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter' && itemInput.trim()) {
+                                    setCharacter(p => ({ ...p, items: [...p.items, itemInput.trim()] }));
+                                    setItemInput('');
+                                    setShowItemInput(false);
+                                  } else if (e.key === 'Escape') {
+                                    setShowItemInput(false);
+                                  }
+                                }}
+                                className="flex-1 bg-transparent text-sm outline-none px-1 text-[#3a2210] min-w-0"
+                                placeholder={t.addItem}
+                              />
+                              <button onClick={() => setShowItemInput(false)} className="text-[#8b5e3c] p-1"><X size={14} /></button>
+                            </div>
+                          ) : (
+                            <button 
+                              onClick={() => setShowItemInput(true)}
+                              className="w-full py-2 border-2 border-dashed border-[#e8d5a7] text-[#e8d5a7] rounded-md text-xs font-bold flex items-center justify-center gap-1 hover:bg-[#e8d5a7] hover:text-[#5c3a21] transition-colors"
+                            >
+                              <Plus size={14} /> {t.add}
+                            </button>
+                          )}
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </div>
-              </section>
+              </div>
+            </section>
 
-              {/* Quick Actions & Spells */}
+            {/* Quick Actions & Spells */}
               <section className="bg-[#fff9eb] border-2 border-[#8b5e3c] rounded-lg p-4 shadow-md space-y-4">
                 <div className="grid grid-cols-2 gap-3">
-                  <button 
-                    onClick={eatProvision}
-                    disabled={character.provisions === 0}
-                    className="flex items-center justify-center gap-2 p-3 bg-[#8b5e3c] text-white rounded-xl text-sm font-bold shadow-md active:scale-95 transition-transform disabled:opacity-50"
-                  >
-                    <Apple size={18} /> {t.eatProvision} ({character.provisions})
-                  </button>
+                  <div className="flex flex-col gap-2">
+                    <button 
+                      onClick={eatProvision}
+                      disabled={character.provisions === 0}
+                      className="flex items-center justify-center gap-2 p-3 bg-[#8b5e3c] text-white rounded-xl text-sm font-bold shadow-md active:scale-95 transition-transform disabled:opacity-50"
+                    >
+                      <Apple size={18} /> {t.eatProvision} ({character.provisions})
+                    </button>
+                    <button 
+                      onClick={() => {
+                        setConfirmModal({
+                          isOpen: true,
+                          title: t.endDay,
+                          message: t.dayEndConfirm,
+                          onConfirm: () => {
+                            if (character.provisions > 0) {
+                              setCharacter(p => ({ ...p, provisions: p.provisions - 1, day: (p.day || 1) + 1 }));
+                              showMessage(t.dayEndProvisionUsed);
+                            } else {
+                              showMessage(t.dayEndNoFood);
+                              updateStat('stamina', -3);
+                              setCharacter(p => ({ ...p, day: (p.day || 1) + 1 }));
+                            }
+                            setConfirmModal(p => ({ ...p, isOpen: false }));
+                          }
+                        });
+                      }}
+                      className="flex items-center justify-center gap-2 p-2 bg-[#5c3a21] text-white rounded-lg text-xs font-bold shadow-sm active:scale-95 transition-transform"
+                    >
+                      <Moon size={14} /> {t.endDay}
+                    </button>
+                  </div>
                   <button 
                     onClick={useLibra}
                     disabled={character.libraUsed}
-                    className={`flex items-center justify-center gap-2 p-3 rounded-xl text-sm font-bold shadow-md active:scale-95 transition-transform ${character.libraUsed ? 'bg-gray-400 text-gray-200' : 'bg-[#4a6d8c] text-white'}`}
+                    className={`flex items-center justify-center gap-2 p-3 rounded-xl text-sm font-bold shadow-md active:scale-95 transition-transform h-full ${character.libraUsed ? 'bg-gray-400 text-gray-200' : 'bg-[#4a6d8c] text-white'}`}
                   >
                     <Sparkles size={18} /> {t.libra} {character.libraUsed ? t.libraUsed : ''}
                   </button>
@@ -1125,9 +1432,10 @@ export default function App() {
                               <input 
                                 value={monster.name}
                                 onChange={(e) => setMonsters(p => p.map(m => m.id === monster.id ? { ...m, name: e.target.value } : m))}
-                                className="text-lg font-black bg-transparent border-none p-0 focus:ring-0 text-[#f4e4bc] w-full"
+                                placeholder={t.enemy}
+                                className="text-lg font-black bg-[#1a1a1a] border border-[#8b5e3c]/30 rounded px-2 py-0.5 focus:ring-1 focus:ring-[#8b5e3c] text-[#f4e4bc] w-full transition-all"
                               />
-                              <div className="flex gap-4 mt-1">
+                              <div className="flex gap-4 mt-2">
                                 <div className="flex items-center gap-2">
                                   <span className="text-[10px] uppercase tracking-widest text-gray-400 font-bold">{t.skill}</span>
                                   <div className="flex items-center gap-2 bg-black/40 px-2 py-0.5 rounded-md border border-gray-700">
@@ -1398,7 +1706,7 @@ export default function App() {
                       >
                         {/* Thick dirt path */}
                         <path 
-                          d={isEven ? "M 37.5 0 C 90 30, 90 70, 62.5 100" : "M 62.5 0 C 10 30, 10 70, 37.5 100"} 
+                          d={isEven ? "M 50 0 C 50 20, 90 30, 90 50 C 90 70, 50 80, 50 100" : "M 50 0 C 50 20, 10 30, 10 50 C 10 70, 50 80, 50 100"} 
                           stroke="#d4b895" 
                           strokeWidth="24" 
                           strokeLinecap="round"
@@ -1408,7 +1716,7 @@ export default function App() {
                         />
                         {/* Path borders */}
                         <path 
-                          d={isEven ? "M 37.5 0 C 90 30, 90 70, 62.5 100" : "M 62.5 0 C 10 30, 10 70, 37.5 100"} 
+                          d={isEven ? "M 50 0 C 50 20, 90 30, 90 50 C 90 70, 50 80, 50 100" : "M 50 0 C 50 20, 10 30, 10 50 C 10 70, 50 80, 50 100"} 
                           stroke="#8b5e3c" 
                           strokeWidth="2" 
                           strokeLinecap="round"
@@ -1515,6 +1823,26 @@ export default function App() {
                                   </div>
                                 )}
 
+                                {/* Combat History in Log */}
+                                {entry.monsters && entry.monsters.length > 0 && (
+                                  <div className="space-y-2 pt-3 border-t border-[#8b5e3c]/10">
+                                    <p className="text-[10px] font-bold uppercase tracking-wider opacity-60 flex items-center gap-1">
+                                      <Skull size={10} /> {t.combatArena}
+                                    </p>
+                                    <div className="grid gap-2">
+                                      {entry.monsters.map((m, i) => (
+                                        <div key={i} className="bg-[#3a2210]/5 p-2 rounded-lg border border-[#3a2210]/10 flex justify-between items-center">
+                                          <span className="text-xs font-bold text-[#3a2210]">{m.name}</span>
+                                          <div className="flex gap-3 text-[10px] font-bold">
+                                            <span className="text-[#8b5e3c]">{t.skill}: {m.skill}</span>
+                                            <span className="text-red-700">{t.stamina}: {m.stamina}</span>
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+
                                 {/* Current Stats Snapshot */}
                                 <div className="grid grid-cols-4 gap-2 pt-2 border-t border-[#8b5e3c]/10">
                                   <div className="text-center bg-white p-1 rounded border border-[#8b5e3c]/20">
@@ -1549,6 +1877,45 @@ export default function App() {
                     </motion.div>
                   );
                 })}
+                
+                {/* Final path segment fading out */}
+                {log.length > 0 && (
+                  <div className="relative flex flex-col items-center w-full h-32">
+                    <svg 
+                      className="absolute top-0 left-1/2 w-48 h-full -translate-x-1/2 z-0 overflow-visible" 
+                      preserveAspectRatio="none" 
+                      viewBox="0 0 100 100"
+                    >
+                      <defs>
+                        <linearGradient id="fadePath" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor="#d4b895" stopOpacity="0.8" />
+                          <stop offset="100%" stopColor="#d4b895" stopOpacity="0" />
+                        </linearGradient>
+                        <linearGradient id="fadeBorder" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor="#8b5e3c" stopOpacity="0.6" />
+                          <stop offset="100%" stopColor="#8b5e3c" stopOpacity="0" />
+                        </linearGradient>
+                      </defs>
+                      <path 
+                        d={log.length % 2 === 0 ? "M 50 0 C 50 20, 90 30, 90 50 C 90 70, 50 80, 50 100" : "M 50 0 C 50 20, 10 30, 10 50 C 10 70, 50 80, 50 100"} 
+                        stroke="url(#fadePath)" 
+                        strokeWidth="24" 
+                        strokeLinecap="round"
+                        fill="none" 
+                        vectorEffect="non-scaling-stroke"
+                      />
+                      <path 
+                        d={log.length % 2 === 0 ? "M 50 0 C 50 20, 90 30, 90 50 C 90 70, 50 80, 50 100" : "M 50 0 C 50 20, 10 30, 10 50 C 10 70, 50 80, 50 100"} 
+                        stroke="url(#fadeBorder)" 
+                        strokeWidth="2" 
+                        strokeLinecap="round"
+                        fill="none" 
+                        vectorEffect="non-scaling-stroke"
+                      />
+                    </svg>
+                  </div>
+                )}
+
                 {log.length === 0 && (
                   <div className="text-center py-12 opacity-50 italic">
                     <History size={48} className="mx-auto mb-4" />
@@ -1580,6 +1947,7 @@ export default function App() {
         <div className="max-w-2xl mx-auto flex justify-around">
           <NavButton active={activeTab === 'current'} onClick={() => setActiveTab('current')} icon={<BookOpen />} label={t.navCurrent} />
           <NavButton active={activeTab === 'history'} onClick={() => setActiveTab('history')} icon={<History />} label={t.navHistory} />
+          <NavButton active={false} onClick={() => setView('management')} icon={<Home />} label={t.gameManagement} />
         </div>
       </nav>
 

@@ -26,6 +26,18 @@ export interface LogEntry {
   note: string;
   timestamp: number;
   snapshot: CharacterState;
+  monsters?: Monster[];
+}
+
+export interface GameSession {
+  id: string;
+  bookName: string;
+  startDate: number;
+  lastPlayedDate: number;
+  paragraphsVisited: number;
+  isFinished: boolean;
+  character: CharacterState;
+  log: LogEntry[];
 }
 
 export interface GameState {

@@ -29,6 +29,8 @@ export const TRANSLATIONS = {
     characterManagement: 'ניהול דמות וציוד',
     specialItems: 'חפצים מיוחדים:',
     inventory: 'ציוד ומלאי:',
+    useItem: 'שימוש',
+    quantity: 'כמות:',
     endDay: 'סיום יום',
     add: 'הוסף',
     addItem: 'הוסף חפץ:',
@@ -161,7 +163,20 @@ export const TRANSLATIONS = {
       'זאנה',
       'ניקודמוס'
     ],
-    specialItemsList: ['אבן שמש', 'שן ענק', 'פאה ירוקה', 'מטוטלת פליז']
+    specialItemsList: ['אבן שמש', 'שן ענק', 'פאה ירוקה', 'מטוטלת פליז'],
+    gameManagement: 'ניהול משחקים',
+    newGame: 'משחק חדש',
+    continueGame: 'המשך משחק',
+    backToGame: 'חזור למשחק',
+    book: 'ספר',
+    startDate: 'תאריך התחלה',
+    paragraphsVisited: 'פסקאות שעברת',
+    status: 'סטטוס',
+    finished: 'הסתיים',
+    inProgress: 'בתהליך',
+    darkMode: 'מצב כהה',
+    lightMode: 'מצב בהיר',
+    deleteGame: 'מחק משחק'
   },
   en: {
     title: 'Sorcery!',
@@ -191,6 +206,8 @@ export const TRANSLATIONS = {
     characterManagement: 'Character & Equipment',
     specialItems: 'Special Items:',
     inventory: 'Equipment & Inventory:',
+    useItem: 'Use',
+    quantity: 'Qty:',
     endDay: 'End Day',
     add: 'Add',
     addItem: 'Add item:',
@@ -323,6 +340,19 @@ export const TRANSLATIONS = {
       'Zana',
       'Nicodemus'
     ],
-    specialItemsList: ['Sun Jewel', 'Giant Tooth', 'Green Wig', 'Brass Pendulum']
+    specialItemsList: ['Sun Jewel', 'Giant Tooth', 'Green Wig', 'Brass Pendulum'],
+    gameManagement: 'Game Management',
+    newGame: 'New Game',
+    continueGame: 'Continue Game',
+    backToGame: 'Back to Game',
+    book: 'Book',
+    startDate: 'Start Date',
+    paragraphsVisited: 'Paragraphs Visited',
+    status: 'Status',
+    finished: 'Finished',
+    inProgress: 'In Progress',
+    darkMode: 'Dark Mode',
+    lightMode: 'Light Mode',
+    deleteGame: 'Delete Game'
   }
 };

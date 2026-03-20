@@ -1,1 +1,28 @@
 @import "tailwindcss";
+
+.theme-dark {
+  background-color: #1a1614 !important;
+  color: #e8d5a7 !important;
+}
+
+.theme-dark .bg-\[\#f4e4bc\] { background-color: #1a1614 !important; }
+.theme-dark .bg-\[\#fff9eb\] { background-color: #2c2420 !important; }
+.theme-dark .bg-\[\#e8d5a7\] { background-color: #3a2210 !important; }
+.theme-dark .text-\[\#2c1810\] { color: #e8d5a7 !important; }
+.theme-dark .text-\[\#3a2210\] { color: #f4e4bc !important; }
+.theme-dark .border-\[\#8b5e3c\] { border-color: #c28e62 !important; }
+.theme-dark .border-\[\#3a2210\] { border-color: #8b5e3c !important; }
+.theme-dark .bg-\[\#8b5e3c\] { background-color: #6d4a30 !important; }
+.theme-dark .bg-\[\#5c3a21\] { background-color: #3a2210 !important; }
+.theme-dark .bg-\[\#6a462b\] { background-color: #4a2e1b !important; }
+.theme-dark .bg-\[\#7a5233\] { background-color: #5c3a21 !important; }
+.theme-dark .bg-\[\#8b5a2b\] { background-color: #5c3a21 !important; }
+.theme-dark .bg-\[\#a06b35\] { background-color: #6a462b !important; }
+.theme-dark .bg-\[\#4a2e1b\] { background-color: #2a180b !important; }
+.theme-dark .bg-\[\#2a180b\] { background-color: #1a0f07 !important; }
+.theme-dark .border-\[\#2a180b\] { border-color: #1a0f07 !important; }
+.theme-dark .border-\[\#4a2e1b\] { border-color: #2a180b !important; }
+.theme-dark .text-\[\#8b5e3c\] { color: #c28e62 !important; }
+.theme-dark .ring-\[\#8b5e3c\\/30\] { --tw-ring-color: rgba(194, 142, 98, 0.3) !important; }
+.theme-dark .border-\[\#8b5e3c\\/20\] { border-color: rgba(194, 142, 98, 0.2) !important; }
+.theme-dark .bg-\[\#fff9eb\\/80\] { background-color: rgba(44, 36, 32, 0.8) !important; }
