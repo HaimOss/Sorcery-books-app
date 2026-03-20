@@ -17,6 +17,7 @@ export interface CharacterState {
   items: string[];
   libraUsed: boolean;
   notes: string;
+  day: number;
 }
 
 export interface LogEntry {

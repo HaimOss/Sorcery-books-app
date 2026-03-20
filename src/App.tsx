@@ -34,7 +34,11 @@ import {
   AlertCircle,
   X,
   Download,
-  Upload
+  Upload,
+  ChevronDown,
+  ChevronUp,
+  Map,
+  Wind
 } from 'lucide-react';
 import { GameClass, CharacterState, LogEntry, Stats, Monster } from './types.ts';
 import { SPELLS, WIZARD_NAMES } from './constants.ts';
@@ -56,6 +60,7 @@ const INITIAL_CHARACTER: CharacterState = {
   items: [],
   libraUsed: false,
   notes: '',
+  day: 1,
 };
 
 // --- Components ---
@@ -96,29 +101,29 @@ function StatAdjuster({ label, val, onInc, onDec }: {
   onDec: () => void;
 }) {
   return (
-    <div className="flex items-center justify-between bg-white/40 p-2 rounded-lg border border-[#8b5e3c]/30 px-3">
-      <button 
-        onClick={(e) => { e.stopPropagation(); onDec(); }} 
-        className="p-2 bg-[#8b5e3c] text-white rounded-lg active:scale-90 shadow-sm"
-      >
-        <Minus size={16} />
-      </button>
-      
-      <div className="flex flex-col items-center flex-1">
-        <span className="text-[10px] font-bold opacity-60 mb-0.5">{label}</span>
-        <div className="bg-[#e8d5a7] border-2 border-[#8b5e3c] rounded-md px-3 py-0.5 shadow-inner min-w-[45px] text-center">
-          <span dir="ltr" className={`text-xl font-bold leading-none block ${val > 0 ? 'text-green-800' : val < 0 ? 'text-red-800' : ''}`}>
+    <div className="flex flex-col items-center bg-white/40 p-1.5 sm:p-2 rounded-lg border border-[#8b5e3c]/30">
+      <span className="text-[10px] font-bold opacity-60 mb-1">{label}</span>
+      <div className="flex items-center justify-center gap-1 sm:gap-2 w-full" dir="ltr">
+        <button 
+          onClick={(e) => { e.stopPropagation(); onDec(); }} 
+          className="p-1.5 sm:p-2 bg-[#8b5e3c] text-white rounded-lg active:scale-90 shadow-sm"
+        >
+          <Minus size={14} className="sm:w-4 sm:h-4" />
+        </button>
+        
+        <div className="bg-[#e8d5a7] border-2 border-[#8b5e3c] rounded-md px-1.5 sm:px-3 py-0.5 shadow-inner min-w-[36px] sm:min-w-[45px] text-center">
+          <span className={`text-base sm:text-xl font-bold leading-none block ${val > 0 ? 'text-green-800' : val < 0 ? 'text-red-800' : ''}`}>
             {val > 0 ? `+${val}` : val}
           </span>
         </div>
-      </div>
 
-      <button 
-        onClick={(e) => { e.stopPropagation(); onInc(); }} 
-        className="p-2 bg-[#8b5e3c] text-white rounded-lg active:scale-90 shadow-sm"
-      >
-        <Plus size={16} />
-      </button>
+        <button 
+          onClick={(e) => { e.stopPropagation(); onInc(); }} 
+          className="p-1.5 sm:p-2 bg-[#8b5e3c] text-white rounded-lg active:scale-90 shadow-sm"
+        >
+          <Plus size={14} className="sm:w-4 sm:h-4" />
+        </button>
+      </div>
     </div>
   );
 }
@@ -143,6 +148,33 @@ function DieIcon({ val, size = 32 }: { val: number; size?: number }) {
   return <Icon size={size} />;
 }
 
+// --- Helpers ---
+const getSnapshotDiff = (current: CharacterState, previous?: CharacterState) => {
+  if (!previous) return null;
+  const diffs = [];
+  
+  if (current.skill.current !== previous.skill.current) {
+    diffs.push({ stat: 'skill', diff: current.skill.current - previous.skill.current });
+  }
+  if (current.stamina.current !== previous.stamina.current) {
+    diffs.push({ stat: 'stamina', diff: current.stamina.current - previous.stamina.current });
+  }
+  if (current.luck.current !== previous.luck.current) {
+    diffs.push({ stat: 'luck', diff: current.luck.current - previous.luck.current });
+  }
+  if (current.gold !== previous.gold) {
+    diffs.push({ stat: 'gold', diff: current.gold - previous.gold });
+  }
+  if (current.provisions !== previous.provisions) {
+    diffs.push({ stat: 'provisions', diff: current.provisions - previous.provisions });
+  }
+  
+  const addedItems = current.items.filter(i => !previous.items.includes(i));
+  const removedItems = previous.items.filter(i => !current.items.includes(i));
+  
+  return { diffs, addedItems, removedItems };
+};
+
 export default function App() {
   const [character, setCharacter] = useState<CharacterState>(INITIAL_CHARACTER);
   const [log, setLog] = useState<LogEntry[]>([]);
@@ -151,6 +183,7 @@ export default function App() {
   const [shake, setShake] = useState(false);
   const [activeTab, setActiveTab] = useState<'current' | 'history'>('current');
   const [spellInput, setSpellInput] = useState('');
+  const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
   const [monsters, setMonsters] = useState<Monster[]>([]);
   const [paragraphInput, setParagraphInput] = useState('');
   const [noteInput, setNoteInput] = useState('');
@@ -177,7 +210,7 @@ export default function App() {
     result: 'win' | 'loss' | 'draw' | null;
     luckTested: boolean;
   }>({ playerRoll: [], monsterRoll: [], monsterId: null, result: null, luckTested: false });
-  const [deltas, setDeltas] = useState({ skill: 0, stamina: 0, luck: 0, gold: 0 });
+  const [deltas, setDeltas] = useState({ skill: 0, stamina: 0, luck: 0, gold: 0, provisions: 0 });
   const [floatingDeltas, setFloatingDeltas] = useState<{ id: string; stat: string; delta: number }[]>([]);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [language, setLanguage] = useState<Language>('he');
@@ -261,17 +294,17 @@ export default function App() {
     setTimeout(() => setErrorMsg(null), 3000);
   };
 
-  const adjustWithDelta = (stat: 'skill' | 'stamina' | 'luck' | 'gold', amount: number, ignoreMax = false) => {
-    if (stat === 'gold') {
-      const prevGold = character.gold;
-      const newGold = Math.max(0, prevGold + amount);
-      if (newGold !== prevGold) {
-        setCharacter(p => ({ ...p, gold: newGold }));
-        setDeltas(d => ({ ...d, gold: d.gold + (newGold - prevGold) }));
+  const adjustWithDelta = (stat: 'skill' | 'stamina' | 'luck' | 'gold' | 'provisions', amount: number, ignoreMax = false) => {
+    if (stat === 'gold' || stat === 'provisions') {
+      const prevVal = character[stat];
+      const newVal = Math.max(0, prevVal + amount);
+      if (newVal !== prevVal) {
+        setCharacter(p => ({ ...p, [stat]: newVal }));
+        setDeltas(d => ({ ...d, [stat]: d[stat] + (newVal - prevVal) }));
         
         // Floating delta animation
         const id = Math.random().toString(36).substr(2, 9);
-        setFloatingDeltas(prev => [...prev, { id, stat: 'gold', delta: amount }]);
+        setFloatingDeltas(prev => [...prev, { id, stat, delta: amount }]);
         setTimeout(() => {
           setFloatingDeltas(prev => prev.filter(d => d.id !== id));
         }, 2000);
@@ -350,7 +383,7 @@ export default function App() {
     setParagraphInput('');
     setNoteInput('');
     setMonsters([]); // Clear monsters for next paragraph
-    setDeltas({ skill: 0, stamina: 0, luck: 0, gold: 0 }); // Reset deltas for next paragraph
+    setDeltas({ skill: 0, stamina: 0, luck: 0, gold: 0, provisions: 0 }); // Reset deltas for next paragraph
     showMessage(t.logSaved);
   };
 
@@ -374,7 +407,7 @@ export default function App() {
     setLog([]);
     setIsInitialized(false);
     setMonsters([]);
-    setDeltas({ skill: 0, stamina: 0, luck: 0, gold: 0 });
+    setDeltas({ skill: 0, stamina: 0, luck: 0, gold: 0, provisions: 0 });
     localStorage.removeItem('sorcery_game_state');
     setActiveTab('current');
   };
@@ -476,13 +509,15 @@ export default function App() {
         luck: [l1]
       });
 
-      setCharacter({
+      setCharacter(prev => ({
         ...INITIAL_CHARACTER,
+        name: prev.name,
+        bookName: prev.bookName,
         class: gameClass,
         skill: { current: initialSkill, max: initialSkill },
         stamina: { current: initialStamina, max: initialStamina },
         luck: { current: initialLuck, max: initialLuck },
-      });
+      }));
       setIsRolling(false);
     }, 1500);
   };
@@ -647,7 +682,7 @@ export default function App() {
 
               <div className="flex gap-4">
                 <button 
-                  onClick={() => setCharacter(INITIAL_CHARACTER)}
+                  onClick={() => character.class && generateStats(character.class)}
                   className="flex-1 py-3 border-2 border-[#8b5e3c] rounded-lg font-bold hover:bg-[#e8d5a7]"
                 >
                   {t.rollAgain}
@@ -718,7 +753,8 @@ export default function App() {
               <span>{
                 d.stat === 'skill' ? t.skill : 
                 d.stat === 'stamina' ? t.stamina : 
-                d.stat === 'luck' ? t.luck : t.gold
+                d.stat === 'luck' ? t.luck : 
+                d.stat === 'provisions' ? t.provisions : t.gold
               }</span>
             </motion.div>
           ))}
@@ -848,14 +884,15 @@ export default function App() {
                 </h2>
                 
                 {/* Stat Adjustments */}
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-3">
+                <div className="grid grid-cols-2 gap-2 sm:gap-4">
+                  <div className="space-y-2 sm:space-y-3">
                     <StatAdjuster label={t.skill} val={deltas.skill} onInc={() => adjustWithDelta('skill', 1)} onDec={() => adjustWithDelta('skill', -1)} />
                     <StatAdjuster label={t.stamina} val={deltas.stamina} onInc={() => adjustWithDelta('stamina', 1)} onDec={() => adjustWithDelta('stamina', -1)} />
-                  </div>
-                  <div className="space-y-3">
                     <StatAdjuster label={t.luck} val={deltas.luck} onInc={() => adjustWithDelta('luck', 1)} onDec={() => adjustWithDelta('luck', -1)} />
+                  </div>
+                  <div className="space-y-2 sm:space-y-3">
                     <StatAdjuster label={t.gold} val={deltas.gold} onInc={() => adjustWithDelta('gold', 1)} onDec={() => adjustWithDelta('gold', -1)} />
+                    <StatAdjuster label={t.provisions} val={deltas.provisions} onInc={() => adjustWithDelta('provisions', 1)} onDec={() => adjustWithDelta('provisions', -1)} />
                   </div>
                 </div>
 
@@ -892,11 +929,12 @@ export default function App() {
                             message: t.dayEndConfirm,
                             onConfirm: () => {
                               if (character.provisions > 0) {
-                                setCharacter(p => ({ ...p, provisions: p.provisions - 1 }));
+                                setCharacter(p => ({ ...p, provisions: p.provisions - 1, day: (p.day || 1) + 1 }));
                                 showMessage(t.dayEndProvisionUsed);
                               } else {
                                 showMessage(t.dayEndNoFood);
                                 updateStat('stamina', -3);
+                                setCharacter(p => ({ ...p, day: (p.day || 1) + 1 }));
                               }
                               setConfirmModal(p => ({ ...p, isOpen: false }));
                             }
@@ -966,26 +1004,28 @@ export default function App() {
                   </button>
                 </div>
 
-                <div className="flex gap-2">
-                  <input 
-                    value={spellInput}
-                    onChange={(e) => setSpellInput(e.target.value.slice(0, 3).toUpperCase())}
-                    placeholder={t.spellCode}
-                    className="flex-1 bg-[#e8d5a7] border-2 border-[#8b5e3c] rounded-lg p-2 text-center font-bold tracking-widest focus:ring-0"
-                  />
-                  <button 
-                    onClick={castSpell}
-                    className="bg-[#4a6d8c] text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2"
-                  >
-                    <Zap size={18} /> {t.cast}
-                  </button>
-                  <button 
-                    onClick={() => setShowSpellList(true)}
-                    className="bg-[#e8d5a7] border-2 border-[#8b5e3c] p-2 rounded-lg"
-                  >
-                    <BookOpen size={20} />
-                  </button>
-                </div>
+                {character.class === 'Sorcerer' && (
+                  <div className="flex gap-1.5 sm:gap-2">
+                    <input 
+                      value={spellInput}
+                      onChange={(e) => setSpellInput(e.target.value.slice(0, 3).toUpperCase())}
+                      placeholder={t.spellCode}
+                      className="flex-1 min-w-0 bg-[#e8d5a7] border-2 border-[#8b5e3c] rounded-lg p-1.5 sm:p-2 text-center font-bold tracking-widest focus:ring-0 text-sm sm:text-base"
+                    />
+                    <button 
+                      onClick={castSpell}
+                      className="bg-[#4a6d8c] text-white px-2 sm:px-3 py-1.5 sm:py-2 rounded-lg font-bold flex items-center gap-1 whitespace-nowrap shrink-0 text-sm sm:text-base"
+                    >
+                      <Zap size={16} className="sm:w-[18px] sm:h-[18px]" /> <span className="hidden sm:inline">{t.cast}</span>
+                    </button>
+                    <button 
+                      onClick={() => setShowSpellList(true)}
+                      className="bg-[#e8d5a7] border-2 border-[#8b5e3c] p-1.5 sm:p-2 rounded-lg shrink-0"
+                    >
+                      <BookOpen size={18} className="sm:w-5 sm:h-5" />
+                    </button>
+                  </div>
+                )}
               </section>
 
               {/* Dice Roller */}
@@ -1298,33 +1338,217 @@ export default function App() {
               exit={{ opacity: 0, y: -10 }}
               className="space-y-4"
             >
-              <h2 className="text-2xl font-bold border-b-2 border-[#8b5e3c] pb-2">{t.journeyLog}</h2>
-              <div className="space-y-3">
-                {log.map(entry => (
-                  <div key={entry.id} className="bg-[#fff9eb] border-2 border-[#8b5e3c] p-4 rounded-lg shadow-md flex items-center justify-between">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <p className="text-xl font-bold">{t.paragraph} {entry.paragraph}</p>
-                        <span className="text-[10px] bg-[#8b5e3c] text-white px-2 py-0.5 rounded-full">
-                          {entry.snapshot.name}
-                        </span>
-                      </div>
-                      <p className="text-sm opacity-80">{entry.note || t.noNote}</p>
-                      <div className="flex gap-2 mt-2 text-[10px] opacity-60">
-                        <span>{t.skill}: {entry.snapshot.skill.current}</span>
-                        <span>{t.stamina}: {entry.snapshot.stamina.current}</span>
-                        <span>{t.luck}: {entry.snapshot.luck.current}</span>
-                        <span>{t.gold}: {entry.snapshot.gold}</span>
-                      </div>
-                    </div>
-                    <button 
-                      onClick={() => revertToEntry(entry)}
-                      className="bg-[#8b5e3c] text-white p-2 rounded-lg flex items-center gap-1 text-xs"
-                    >
-                      <Undo2 size={16} /> {t.revert}
-                    </button>
+              <h2 className="text-2xl font-bold border-b-2 border-[#8b5e3c] pb-2 text-center">{t.journeyLog}</h2>
+              
+              {/* Statistics Summary */}
+              {log.length > 0 && (
+                <div className="flex justify-center gap-4 text-sm font-bold text-[#8b5e3c] opacity-80 mb-4">
+                  <div className="bg-[#fff9eb] px-3 py-1 rounded-full border border-[#8b5e3c]/20 shadow-sm">
+                    {t.day} {character.day || 1}
                   </div>
-                ))}
+                  <div className="bg-[#fff9eb] px-3 py-1 rounded-full border border-[#8b5e3c]/20 shadow-sm">
+                    {log.length} {t.paragraph}
+                  </div>
+                </div>
+              )}
+
+              <div className="relative py-10 w-full max-w-md mx-auto">
+                {log.map((entry, index) => {
+                  const previousEntry = log[index + 1];
+                  const diff = getSnapshotDiff(entry.snapshot, previousEntry?.snapshot);
+                  const isExpanded = expandedLogId === entry.id;
+                  const isEven = index % 2 === 0;
+                  const isNewest = index === 0;
+                  
+                  const flavorTextsHe = [
+                    "הרוח מלטפת את פניך...",
+                    "שקט מתוח באוויר...",
+                    "הדרך מתפתלת אל הלא נודע...",
+                    "ציוץ ציפורים נשמע מרחוק...",
+                    "עלי שלכת נושרים סביבך...",
+                    "תחושה של מסתורין באוויר...",
+                    "הזמן כאילו עמד מלכת...",
+                    "קרני שמש חודרות מבעד לעננים..."
+                  ];
+                  const flavorTextsEn = [
+                    "The wind brushes your face...",
+                    "A tense silence in the air...",
+                    "The path winds into the unknown...",
+                    "Birds chirp in the distance...",
+                    "Autumn leaves fall around you...",
+                    "A sense of mystery in the air...",
+                    "Time seems to stand still...",
+                    "Sunbeams pierce through the clouds..."
+                  ];
+                  const flavorText = (t.day === 'Day' ? flavorTextsEn : flavorTextsHe)[entry.timestamp % flavorTextsHe.length];
+                  
+                  return (
+                    <motion.div 
+                      key={entry.id} 
+                      initial={{ opacity: 0, y: 20 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.4, delay: Math.min(index * 0.05, 0.5) }}
+                      className="relative flex flex-col items-center mb-10 w-full"
+                    >
+                      {/* Winding Path connecting to next item */}
+                      <svg 
+                        className="absolute top-5 left-1/2 w-48 h-[calc(100%+2.5rem)] -translate-x-1/2 z-0 overflow-visible" 
+                        preserveAspectRatio="none" 
+                        viewBox="0 0 100 100"
+                      >
+                        {/* Thick dirt path */}
+                        <path 
+                          d={isEven ? "M 37.5 0 C 90 30, 90 70, 62.5 100" : "M 62.5 0 C 10 30, 10 70, 37.5 100"} 
+                          stroke="#d4b895" 
+                          strokeWidth="24" 
+                          strokeLinecap="round"
+                          fill="none" 
+                          vectorEffect="non-scaling-stroke"
+                          className="opacity-80"
+                        />
+                        {/* Path borders */}
+                        <path 
+                          d={isEven ? "M 37.5 0 C 90 30, 90 70, 62.5 100" : "M 62.5 0 C 10 30, 10 70, 37.5 100"} 
+                          stroke="#8b5e3c" 
+                          strokeWidth="2" 
+                          strokeLinecap="round"
+                          fill="none" 
+                          vectorEffect="non-scaling-stroke"
+                          className="opacity-60"
+                        />
+                      </svg>
+
+                      {/* Random stones for this segment */}
+                      {isEven ? (
+                        <>
+                          <div className="absolute top-1/4 start-1/2 ms-20 w-4 h-3 bg-stone-400 rounded-full shadow-sm" style={{ borderRadius: '40% 60% 70% 30%' }}></div>
+                          <div className="absolute top-1/2 start-1/2 ms-28 w-2 h-2 bg-stone-500 rounded-full shadow-sm" style={{ borderRadius: '60% 40% 30% 70%' }}></div>
+                          <div className="absolute top-3/4 start-1/2 ms-24 w-5 h-4 bg-stone-400 rounded-full shadow-sm" style={{ borderRadius: '50% 50% 40% 60%' }}></div>
+                          <div className="absolute top-1/3 start-1/2 ms-4 w-3 h-2 bg-stone-500 rounded-full shadow-sm" style={{ borderRadius: '30% 70% 50% 50%' }}></div>
+                          <div className="absolute top-2/3 start-1/2 ms-12 w-4 h-3 bg-stone-400 rounded-full shadow-sm" style={{ borderRadius: '70% 30% 60% 40%' }}></div>
+                          {/* Extra decorative stones */}
+                          <div className="absolute top-1/5 start-1/2 ms-32 w-2 h-2 bg-stone-300 rounded-full shadow-sm"></div>
+                          <div className="absolute top-4/5 start-1/2 ms-16 w-3 h-2 bg-stone-500 rounded-full shadow-sm"></div>
+                        </>
+                      ) : (
+                        <>
+                          <div className="absolute top-1/4 end-1/2 me-20 w-4 h-3 bg-stone-400 rounded-full shadow-sm" style={{ borderRadius: '40% 60% 70% 30%' }}></div>
+                          <div className="absolute top-1/2 end-1/2 me-28 w-2 h-2 bg-stone-500 rounded-full shadow-sm" style={{ borderRadius: '60% 40% 30% 70%' }}></div>
+                          <div className="absolute top-3/4 end-1/2 me-24 w-5 h-4 bg-stone-400 rounded-full shadow-sm" style={{ borderRadius: '50% 50% 40% 60%' }}></div>
+                          <div className="absolute top-1/3 end-1/2 me-4 w-3 h-2 bg-stone-500 rounded-full shadow-sm" style={{ borderRadius: '30% 70% 50% 50%' }}></div>
+                          <div className="absolute top-2/3 end-1/2 me-12 w-4 h-3 bg-stone-400 rounded-full shadow-sm" style={{ borderRadius: '70% 30% 60% 40%' }}></div>
+                          {/* Extra decorative stones */}
+                          <div className="absolute top-1/5 end-1/2 me-32 w-2 h-2 bg-stone-300 rounded-full shadow-sm"></div>
+                          <div className="absolute top-4/5 end-1/2 me-16 w-3 h-2 bg-stone-500 rounded-full shadow-sm"></div>
+                        </>
+                      )}
+
+                      {/* The Bubble */}
+                      <motion.button 
+                        whileHover={{ scale: 1.1 }}
+                        whileTap={{ scale: 0.95 }}
+                        onClick={() => setExpandedLogId(isExpanded ? null : entry.id)}
+                        className={`z-10 relative flex flex-col items-center justify-center w-10 h-10 rounded-full border-[3px] shadow-md transition-colors ${isExpanded ? 'bg-[#8b5e3c] border-[#fff9eb] text-[#fff9eb]' : 'bg-[#fff9eb] border-[#8b5e3c] text-[#2c1810]'} ${isNewest && !isExpanded ? 'ring-4 ring-[#8b5e3c]/30 animate-pulse' : ''}`}
+                      >
+                        <span className="text-lg font-black leading-none">{entry.paragraph}</span>
+                        
+                        {/* Mini indicators on the bubble edge */}
+                        {!isExpanded && diff && (diff.diffs.length > 0 || diff.addedItems.length > 0 || diff.removedItems.length > 0) && (
+                          <div className="absolute -top-1 -right-1 bg-red-500 text-white text-[8px] font-bold w-3 h-3 rounded-full flex items-center justify-center border border-[#fff9eb]">
+                            !
+                          </div>
+                        )}
+                      </motion.button>
+
+                      {/* Time and Day labels outside the bubble */}
+                      <div className={`absolute top-2 w-32 ${isEven ? 'start-1/2 ms-8 text-start' : 'end-1/2 me-8 text-end'}`}>
+                        <div className="text-[10px] font-bold text-[#8b5e3c] bg-[#fff9eb]/80 px-2 py-0.5 rounded-full inline-block shadow-sm border border-[#8b5e3c]/20">
+                          {t.day} {entry.snapshot.day || 1} • {new Date(entry.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                        </div>
+                      </div>
+
+                      {/* Expanded Card */}
+                      <AnimatePresence>
+                        {isExpanded && (
+                          <motion.div
+                            initial={{ height: 0, opacity: 0, scale: 0.9 }}
+                            animate={{ height: 'auto', opacity: 1, scale: 1 }}
+                            exit={{ height: 0, opacity: 0, scale: 0.9 }}
+                            className="w-full max-w-sm mt-4 z-20 px-4"
+                          >
+                            <div className="bg-[#fff9eb] border-2 border-[#8b5e3c] rounded-xl shadow-xl overflow-hidden relative">
+                              <div className="p-4 space-y-4">
+                                {entry.note && (
+                                  <div className="text-sm bg-white p-3 rounded border border-[#8b5e3c]/20 shadow-inner">
+                                    {entry.note}
+                                  </div>
+                                )}
+                                
+                                {/* Changes */}
+                                {diff && (diff.diffs.length > 0 || diff.addedItems.length > 0 || diff.removedItems.length > 0) ? (
+                                  <div className="space-y-2">
+                                    <p className="text-xs font-bold uppercase tracking-wider opacity-60">{t.changes}</p>
+                                    <div className="flex flex-wrap gap-2">
+                                      {diff.diffs.map(d => (
+                                        <span key={d.stat} className={`text-xs px-2 py-1 rounded-full font-bold ${d.diff > 0 ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                                          {t[d.stat as keyof typeof t]}: {d.diff > 0 ? '+' : ''}{d.diff}
+                                        </span>
+                                      ))}
+                                      {diff.addedItems.map(item => (
+                                        <span key={`add-${item}`} className="text-xs px-2 py-1 rounded-full font-bold bg-blue-100 text-blue-800 flex items-center gap-1">
+                                          <Plus size={10} /> {item}
+                                        </span>
+                                      ))}
+                                      {diff.removedItems.map(item => (
+                                        <span key={`rem-${item}`} className="text-xs px-2 py-1 rounded-full font-bold bg-orange-100 text-orange-800 flex items-center gap-1">
+                                          <Minus size={10} /> {item}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <div className="flex items-center gap-2 text-xs opacity-70 italic text-[#8b5e3c] bg-white/50 p-2 rounded border border-[#8b5e3c]/10">
+                                    <motion.div animate={{ x: [0, 3, 0] }} transition={{ repeat: Infinity, duration: 2, ease: "easeInOut" }}>
+                                      <Wind size={14} />
+                                    </motion.div>
+                                    <span>{flavorText}</span>
+                                  </div>
+                                )}
+
+                                {/* Current Stats Snapshot */}
+                                <div className="grid grid-cols-4 gap-2 pt-2 border-t border-[#8b5e3c]/10">
+                                  <div className="text-center bg-white p-1 rounded border border-[#8b5e3c]/20">
+                                    <div className="text-[10px] opacity-60">{t.skill}</div>
+                                    <div className="font-bold">{entry.snapshot.skill.current}</div>
+                                  </div>
+                                  <div className="text-center bg-white p-1 rounded border border-[#8b5e3c]/20">
+                                    <div className="text-[10px] opacity-60">{t.stamina}</div>
+                                    <div className="font-bold">{entry.snapshot.stamina.current}</div>
+                                  </div>
+                                  <div className="text-center bg-white p-1 rounded border border-[#8b5e3c]/20">
+                                    <div className="text-[10px] opacity-60">{t.luck}</div>
+                                    <div className="font-bold">{entry.snapshot.luck.current}</div>
+                                  </div>
+                                  <div className="text-center bg-white p-1 rounded border border-[#8b5e3c]/20">
+                                    <div className="text-[10px] opacity-60">{t.gold}</div>
+                                    <div className="font-bold">{entry.snapshot.gold}</div>
+                                  </div>
+                                </div>
+
+                                <button 
+                                  onClick={() => revertToEntry(entry)}
+                                  className="w-full py-2 mt-2 bg-[#8b5e3c] text-white rounded-lg flex items-center justify-center gap-2 font-bold hover:bg-[#6a462b] transition-colors"
+                                >
+                                  <Undo2 size={18} /> {t.revert}
+                                </button>
+                              </div>
+                            </div>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </motion.div>
+                  );
+                })}
                 {log.length === 0 && (
                   <div className="text-center py-12 opacity-50 italic">
                     <History size={48} className="mx-auto mb-4" />
