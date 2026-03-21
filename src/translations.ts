@@ -176,7 +176,15 @@ export const TRANSLATIONS = {
     inProgress: 'בתהליך',
     darkMode: 'מצב כהה',
     lightMode: 'מצב בהיר',
-    deleteGame: 'מחק משחק'
+    deleteGame: 'מחק משחק',
+    confirm: 'אישור',
+    ate: 'אכלתי (-1 מזון)',
+    didNotEat: 'לא אכלתי (-3 כוח)',
+    nextParagraph: 'הפסקה הבאה',
+    paragraphNumber: 'מספר פסקה',
+    newDayBegins: 'יום חדש מתחיל!',
+    exceedMaxTitle: 'מעבר למגבלות הגורל?',
+    exceedMaxMessage: 'האם בכוונתך להתעלות מעבר למגבלות הטבעיות? כוחות נסתרים אישרו את חריגת ה-{stat} באופן יוצא דופן עבורך...',
   },
   en: {
     title: 'Sorcery!',
@@ -353,6 +361,14 @@ export const TRANSLATIONS = {
     inProgress: 'In Progress',
     darkMode: 'Dark Mode',
     lightMode: 'Light Mode',
-    deleteGame: 'Delete Game'
+    deleteGame: 'Delete Game',
+    confirm: 'Confirm',
+    ate: 'I Ate (-1 Provision)',
+    didNotEat: "I Didn't Eat (-3 Stamina)",
+    nextParagraph: 'Next Paragraph',
+    paragraphNumber: 'Paragraph #',
+    newDayBegins: 'A new day begins!',
+    exceedMaxTitle: 'Beyond the Limits of Fate?',
+    exceedMaxMessage: 'Do you intend to transcend your natural limits? Hidden powers have exceptionally approved this {stat} increase for you...',
   }
 };

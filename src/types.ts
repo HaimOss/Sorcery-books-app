@@ -18,6 +18,7 @@ export interface CharacterState {
   libraUsed: boolean;
   notes: string;
   day: number;
+  hasEatenToday: boolean;
 }
 
 export interface LogEntry {

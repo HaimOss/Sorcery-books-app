@@ -41,7 +41,8 @@ import {
   Wind,
   Moon,
   Sun,
-  Home
+  Home,
+  ArrowRightCircle
 } from 'lucide-react';
 import { GameClass, CharacterState, LogEntry, Stats, Monster, GameSession } from './types.ts';
 import { SPELLS, WIZARD_NAMES } from './constants.ts';
@@ -64,6 +65,7 @@ const INITIAL_CHARACTER: CharacterState = {
   libraUsed: false,
   notes: '',
   day: 1,
+  hasEatenToday: false,
 };
 
 // --- Components ---
@@ -202,11 +204,16 @@ export default function App() {
     title: string;
     message: string;
     onConfirm: () => void;
+    onCancel?: () => void;
+    confirmLabel?: string;
+    cancelLabel?: string;
+    showCancel?: boolean;
   }>({
     isOpen: false,
     title: '',
     message: '',
     onConfirm: () => {},
+    showCancel: true
   });
   const [initialRolls, setInitialRolls] = useState<{ skill: number[]; stamina: number[]; luck: number[] } | null>(null);
   const [diceResult, setDiceResult] = useState<{ values: number[] } | null>(null);
@@ -373,7 +380,16 @@ export default function App() {
 
     if (amount > 0 && !ignoreMax && currentVal >= max) {
       const statName = stat === 'skill' ? t.skill : stat === 'luck' ? t.luck : t.stamina;
-      showMessage(t.maxStatError.replace('{max}', max.toString()).replace('{stat}', statName));
+      setConfirmModal({
+        isOpen: true,
+        title: t.exceedMaxTitle,
+        message: t.exceedMaxMessage.replace('{stat}', statName),
+        onConfirm: () => {
+          updateStat(stat, amount, true);
+          setDeltas(d => ({ ...d, [stat]: d[stat] + amount }));
+        },
+        showCancel: true
+      });
       return;
     }
 
@@ -383,7 +399,7 @@ export default function App() {
 
   const eatProvision = () => {
     if (character.provisions > 0) {
-      setCharacter(prev => ({ ...prev, provisions: prev.provisions - 1 }));
+      setCharacter(prev => ({ ...prev, provisions: prev.provisions - 1, hasEatenToday: true }));
       updateStat('stamina', 4);
     }
   };
@@ -442,6 +458,7 @@ export default function App() {
     setMonsters([]); // Clear monsters for next paragraph
     setDeltas({ skill: 0, stamina: 0, luck: 0, gold: 0, provisions: 0 }); // Reset deltas for next paragraph
     showMessage(t.logSaved);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const revertToEntry = (entry: LogEntry) => {
@@ -1091,30 +1108,17 @@ export default function App() {
               exit={{ opacity: 0, y: -10 }}
               className="space-y-6"
             >
-              {/* Paragraph Info */}
-              <section className="bg-[#fff9eb] border-2 border-[#8b5e3c] rounded-lg p-4 shadow-md">
-                <div className="flex gap-3 items-end">
-                  <div className="flex-1">
-                    <label className="block text-[10px] font-bold mb-1 opacity-70 leading-tight min-h-[24px] flex items-end">{t.currentParagraph}</label>
-                    <input 
-                      type="number"
-                      value={paragraphInput}
-                      onChange={(e) => setParagraphInput(e.target.value)}
-                      placeholder="#"
-                      className="w-full h-11 bg-[#e8d5a7] border-2 border-[#8b5e3c] rounded-lg p-2 text-xl font-bold focus:ring-0 text-center"
-                    />
-                  </div>
-                  <div className="flex-[3]">
-                    <label className="block text-[10px] font-bold mb-1 opacity-70 leading-tight min-h-[24px] flex items-end">{t.paragraphNote}</label>
-                    <input 
-                      value={noteInput}
-                      onChange={(e) => setNoteInput(e.target.value)}
-                      placeholder={t.notePlaceholder}
-                      className="w-full h-11 bg-[#e8d5a7] border-2 border-[#8b5e3c] rounded-lg p-2 focus:ring-0"
-                    />
-                  </div>
-                </div>
-              </section>
+              {/* Current Paragraph Display */}
+              <div className="text-center py-6 bg-[#fff9eb] border-2 border-[#8b5e3c] rounded-lg shadow-inner relative overflow-hidden">
+                <div className="absolute top-0 left-0 w-full h-1 bg-[#8b5e3c]/10"></div>
+                <p className="text-[10px] font-bold uppercase tracking-[0.2em] opacity-50 mb-1">{t.currentParagraph}</p>
+                <h1 className="text-6xl font-black text-[#2c1810] italic tracking-tighter">
+                  {log.length > 0 ? log[0].paragraph : '---'}
+                </h1>
+                {log.length > 0 && log[0].note && (
+                  <p className="text-xs italic mt-2 opacity-60 px-6 font-medium">"{log[0].note}"</p>
+                )}
+              </div>
 
               {/* Character Management "The Cube" */}
               <section className="bg-[#fff9eb] border-2 border-[#8b5e3c] rounded-lg p-4 shadow-md space-y-6">
@@ -1279,35 +1283,47 @@ export default function App() {
                       <Apple size={18} /> {t.eatProvision} ({character.provisions})
                     </button>
                     <button 
-                      onClick={() => {
-                        setConfirmModal({
-                          isOpen: true,
-                          title: t.endDay,
-                          message: t.dayEndConfirm,
-                          onConfirm: () => {
-                            if (character.provisions > 0) {
-                              setCharacter(p => ({ ...p, provisions: p.provisions - 1, day: (p.day || 1) + 1 }));
-                              showMessage(t.dayEndProvisionUsed);
-                            } else {
-                              showMessage(t.dayEndNoFood);
-                              updateStat('stamina', -3);
-                              setCharacter(p => ({ ...p, day: (p.day || 1) + 1 }));
-                            }
-                            setConfirmModal(p => ({ ...p, isOpen: false }));
-                          }
-                        });
-                      }}
-                      className="flex items-center justify-center gap-2 p-2 bg-[#5c3a21] text-white rounded-lg text-xs font-bold shadow-sm active:scale-95 transition-transform"
+                      onClick={useLibra}
+                      disabled={character.libraUsed}
+                      className={`flex items-center justify-center gap-2 p-3 rounded-xl text-sm font-bold shadow-md active:scale-95 transition-transform h-full ${character.libraUsed ? 'bg-gray-400 text-gray-200' : 'bg-[#4a6d8c] text-white'}`}
                     >
-                      <Moon size={14} /> {t.endDay}
+                      <Sparkles size={18} /> {t.libra} {character.libraUsed ? t.libraUsed : ''}
                     </button>
                   </div>
                   <button 
-                    onClick={useLibra}
-                    disabled={character.libraUsed}
-                    className={`flex items-center justify-center gap-2 p-3 rounded-xl text-sm font-bold shadow-md active:scale-95 transition-transform h-full ${character.libraUsed ? 'bg-gray-400 text-gray-200' : 'bg-[#4a6d8c] text-white'}`}
+                    onClick={() => {
+                      setConfirmModal({
+                        isOpen: true,
+                        title: t.endDay,
+                        message: t.dayEndConfirm,
+                        confirmLabel: t.ate,
+                        cancelLabel: t.didNotEat,
+                        onConfirm: () => {
+                          if (character.hasEatenToday) {
+                            setCharacter(p => ({ ...p, day: (p.day || 1) + 1, hasEatenToday: false }));
+                            showMessage(t.newDayBegins);
+                          } else if (character.provisions > 0) {
+                            setCharacter(p => ({ ...p, provisions: p.provisions - 1, day: (p.day || 1) + 1, hasEatenToday: false }));
+                            showMessage(t.dayEndProvisionUsed);
+                          } else {
+                            showMessage(t.dayEndNoFood);
+                            updateStat('stamina', -3);
+                            setCharacter(p => ({ ...p, day: (p.day || 1) + 1, hasEatenToday: false }));
+                          }
+                        },
+                        onCancel: () => {
+                          showMessage(t.dayEndNoFood);
+                          updateStat('stamina', -3);
+                          setCharacter(p => ({ ...p, day: (p.day || 1) + 1, hasEatenToday: false }));
+                        }
+                      });
+                    }}
+                    className="flex items-center justify-center gap-2 p-2 bg-[#5c3a21] text-white rounded-xl text-sm font-bold shadow-md active:scale-95 transition-transform h-full"
                   >
-                    <Sparkles size={18} /> {t.libra} {character.libraUsed ? t.libraUsed : ''}
+                    <div className="flex flex-col items-center gap-1">
+                      <Moon size={24} />
+                      <span>{t.endDay}</span>
+                    </div>
                   </button>
                 </div>
 
@@ -1628,13 +1644,46 @@ export default function App() {
                 )}
               </section>
 
-              {/* Save Button */}
-              <button 
-                onClick={saveLogEntry}
-                className="w-full py-4 bg-[#2c1810] text-[#f4e4bc] rounded-xl text-xl font-bold shadow-xl active:scale-95 transition-transform flex items-center justify-center gap-3"
-              >
-                <Save size={24} /> {t.saveState}
-              </button>
+              {/* Next Paragraph Selection */}
+              <section className="bg-[#2c1810] border-4 border-[#8b5e3c] rounded-xl p-6 shadow-2xl space-y-5 relative overflow-hidden">
+                <div className="absolute inset-0 opacity-5 pointer-events-none bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')]" />
+                
+                <div className="relative z-10">
+                  <h3 className="text-[#f4e4bc] font-black text-center uppercase tracking-[0.2em] text-xs mb-4 flex items-center justify-center gap-2">
+                    <ArrowRightCircle size={14} /> {t.nextParagraph}
+                  </h3>
+                  
+                  <div className="flex gap-3 items-end mb-6">
+                    <div className="flex-1">
+                      <label className="block text-[10px] font-bold mb-1 text-[#f4e4bc] opacity-50 uppercase tracking-wider">{t.paragraphNumber}</label>
+                      <input 
+                        type="number"
+                        value={paragraphInput}
+                        onChange={(e) => setParagraphInput(e.target.value)}
+                        placeholder="#"
+                        className="w-full h-14 bg-[#3a2210] border-2 border-[#8b5e3c] rounded-lg p-2 text-3xl font-black text-[#f4e4bc] focus:ring-2 focus:ring-[#8b5e3c] text-center shadow-inner"
+                      />
+                    </div>
+                    <div className="flex-[3]">
+                      <label className="block text-[10px] font-bold mb-1 text-[#f4e4bc] opacity-50 uppercase tracking-wider">{t.paragraphNote}</label>
+                      <input 
+                        value={noteInput}
+                        onChange={(e) => setNoteInput(e.target.value)}
+                        placeholder={t.notePlaceholder}
+                        className="w-full h-14 bg-[#3a2210] border-2 border-[#8b5e3c] rounded-lg p-3 text-[#f4e4bc] focus:ring-2 focus:ring-[#8b5e3c] shadow-inner text-sm"
+                      />
+                    </div>
+                  </div>
+
+                  <button 
+                    onClick={saveLogEntry}
+                    className="w-full py-5 bg-[#8b5e3c] text-white rounded-xl text-xl font-black shadow-2xl active:scale-95 transition-all flex items-center justify-center gap-3 group border-b-4 border-[#5c3a21] hover:bg-[#a67c52]"
+                  >
+                    <Save size={24} className="group-hover:rotate-12 transition-transform" /> 
+                    {t.saveState}
+                  </button>
+                </div>
+              </section>
             </motion.div>
           )}
 
@@ -1971,19 +2020,38 @@ export default function App() {
               <h3 className="text-xl font-bold text-[#2c1810] mb-2">{confirmModal.title}</h3>
               <p className="text-sm opacity-70 mb-6">{confirmModal.message}</p>
               
-              <div className="flex gap-3">
-                <button 
-                  onClick={() => setConfirmModal(p => ({ ...p, isOpen: false }))}
-                  className="flex-1 py-3 bg-gray-200 text-gray-700 rounded-xl font-bold hover:bg-gray-300 transition-colors"
-                >
-                  {t.cancel}
-                </button>
-                <button 
-                  onClick={confirmModal.onConfirm}
-                  className="flex-1 py-3 bg-[#8b5e3c] text-white rounded-xl font-bold hover:bg-[#6d4a30] shadow-lg transition-colors"
-                >
-                  {t.confirm}
-                </button>
+              <div className="flex flex-col gap-3">
+                <div className="flex gap-3">
+                  {(confirmModal.showCancel !== false) && (
+                    <button 
+                      onClick={() => {
+                        if (confirmModal.onCancel) confirmModal.onCancel();
+                        setConfirmModal(p => ({ ...p, isOpen: false }));
+                      }}
+                      className="flex-1 py-3 bg-gray-200 text-gray-700 rounded-xl font-bold hover:bg-gray-300 transition-colors"
+                    >
+                      {confirmModal.cancelLabel || t.cancel}
+                    </button>
+                  )}
+                  <button 
+                    onClick={() => {
+                      confirmModal.onConfirm();
+                      setConfirmModal(p => ({ ...p, isOpen: false }));
+                    }}
+                    className="flex-1 py-3 bg-[#8b5e3c] text-white rounded-xl font-bold hover:bg-[#6d4a30] shadow-lg transition-colors"
+                  >
+                    {confirmModal.confirmLabel || t.confirm}
+                  </button>
+                </div>
+                
+                {confirmModal.onCancel && confirmModal.cancelLabel && (
+                  <button 
+                    onClick={() => setConfirmModal(p => ({ ...p, isOpen: false }))}
+                    className="w-full py-2 text-xs font-bold text-[#8b5e3c] opacity-60 hover:opacity-100 transition-opacity"
+                  >
+                    {t.cancel}
+                  </button>
+                )}
               </div>
             </motion.div>
           </div>
